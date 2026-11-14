@@ -2,6 +2,7 @@ export * from './bdhke.js';
 export * from './keyset.js';
 export * from './ticket.js';
 export * from './token.js';
+export * from './pow.js';
 export {
   bytesToHex,
   hexToBytes,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decodeToken,
+  encodeQrToken,
   encodeToken,
   finalizeIssue,
   generateKeyset,
@@ -91,5 +92,26 @@ describe('token encoding', () => {
     expect(() => encodeToken({ ...t, eventId: 'x'.repeat(65) })).toThrow(/eventId/);
     expect(() => encodeToken({ ...t, kind: 'sats' as never })).toThrow(/kind/);
     expect(() => encodeToken({ ...t, dleq: { ...t.dleq!, r: '00'.repeat(32) } })).toThrow(/dleq/);
+  });
+});
+
+describe('door QR policy (DLEQ only for offline check-in)', () => {
+  it('omits the DLEQ for online check-in', () => {
+    const t = makeToken();
+    const decoded = decodeToken(encodeQrToken(t, { offlineCheckin: false }));
+    const { dleq: _dleq, ...withoutDleq } = t;
+    expect(decoded).toEqual(withoutDleq);
+  });
+
+  it('includes the DLEQ for offline check-in', () => {
+    const t = makeToken();
+    expect(decodeToken(encodeQrToken(t, { offlineCheckin: true }))).toEqual(t);
+  });
+
+  it('online QR is noticeably smaller', () => {
+    const t = makeToken();
+    expect(encodeQrToken(t, { offlineCheckin: false }).length).toBeLessThan(
+      encodeQrToken(t, { offlineCheckin: true }).length - 100,
+    );
   });
 });

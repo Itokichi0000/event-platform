@@ -193,3 +193,22 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
   for (let i = 0; i < a.length; i++) diff |= (a[i] as number) ^ (b[i] as number);
   return diff === 0;
 }
+
+export interface QrPolicy {
+  /** Whether the event allows offline check-in (docs/SPEC.md §4 「運用上の決めごと」). */
+  offlineCheckin: boolean;
+}
+
+/**
+ * Text for the door QR code. The DLEQ proof (which contains the blinding factor r) is included
+ * only when the event uses offline check-in, because only then does the scanner need to verify
+ * the signature without the server. Otherwise anyone who sees the QR — including staff devices —
+ * learns nothing that could be matched against an issuance (docs/PRIVACY.md).
+ *
+ * Backups use plain `encodeToken()` and keep the DLEQ: they never leave the participant.
+ */
+export function encodeQrToken(token: Token, policy: QrPolicy): string {
+  if (policy.offlineCheckin || !token.dleq) return encodeToken(token);
+  const { dleq: _dleq, ...withoutDleq } = token;
+  return encodeToken(withoutDleq);
+}
