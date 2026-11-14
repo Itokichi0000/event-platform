@@ -23,14 +23,28 @@
 
 ## 現在の状態
 
-フェーズ0（土台）。チケット暗号の中核 `packages/core` のみ実装済みです。UI と API はまだありません。
+フェーズ1（無料イベントの MVP）。主催者がイベントを作り、参加者が名前もメールも入れずにチケットを受け取り、
+受付で QR を読み取って入場するまでが動きます。
 
-| パッケージ           | 内容                                             | 状態      |
-| -------------------- | ------------------------------------------------ | --------- |
-| `packages/core`      | BDHKE、DLEQ、鍵セット生成、QR 用トークン符号化   | 実装済み  |
-| `apps/server`        | Hono + SQLite の API サーバー                    | フェーズ1 |
-| `apps/web`           | 参加者 PWA・主催者ダッシュボード・受付スキャナー | フェーズ1 |
-| `packages/messaging` | `MessagingAdapter` と Marmot 実装                | フェーズ3 |
+| パッケージ           | 内容                                                                 | 状態      |
+| -------------------- | -------------------------------------------------------------------- | --------- |
+| `packages/core`      | BDHKE、DLEQ、鍵セット、QR 用トークン符号化、PoW                      | 実装済み  |
+| `apps/server`        | Hono + SQLite の API サーバー（NIP-98 認証、PoW 付き発行、消し込み） | 実装済み  |
+| `apps/web`           | 参加者 PWA・主催者ダッシュボード・受付スキャナー                     | 実装済み  |
+| `packages/messaging` | `MessagingAdapter` と Marmot 実装                                    | フェーズ3 |
+
+まだないもの：有料チケット、招待コード、共同主催者、オフライン受付、チケット返却、英語表示（フェーズ2）。
+
+## 画面
+
+| URL                | 画面                                                     |
+| ------------------ | -------------------------------------------------------- |
+| `/e/:id`           | イベントページ（「参加する」でチケット取得）             |
+| `/tickets`         | マイチケット（オフラインでも開ける）                     |
+| `/t/:id`           | チケットの QR、バックアップ                              |
+| `/tickets/restore` | バックアップ文字列から復元                               |
+| `/host`            | 主催者ダッシュボード（Nostr 拡張 NIP-07 でログイン）     |
+| `/scan/:id#token`  | 受付スキャナー（ダッシュボードで発行したリンクから開く） |
 
 ## 開発
 
@@ -39,6 +53,20 @@ Node.js 22 以上と pnpm 10 が必要です。
 ```bash
 pnpm install
 ```
+
+API サーバーを起動します（別のターミナルで）。`KAMEN_MASTER_KEY` は鍵セットの秘密鍵を暗号化する鍵です。
+
+```bash
+cd apps/server && KAMEN_MASTER_KEY=$(openssl rand -hex 32) POW_DIFFICULTY=12 pnpm dev
+```
+
+Web を起動します。`/api` は `localhost:8787` に転送されます。
+
+```bash
+pnpm --filter @kamen/web dev
+```
+
+テスト・lint・型チェック・E2E：
 
 ```bash
 pnpm test
@@ -50,6 +78,26 @@ pnpm lint
 
 ```bash
 pnpm typecheck
+```
+
+```bash
+pnpm e2e
+```
+
+## セルフホスト
+
+Docker Compose で、Caddy（PWA の配信と `/api` の転送、自動 HTTPS）と API サーバーが起動します。
+同梱の Caddy 設定はアクセスログを残さず、IP アドレスと User-Agent を API サーバーに渡しません。
+
+```bash
+cp .env.example .env
+```
+
+`.env` の `KAMEN_MASTER_KEY`（`openssl rand -hex 32` で生成）、`KAMEN_DOMAIN`、`PUBLIC_ORIGIN` を設定します。
+マスター鍵をなくすと既存イベントのチケットを検証できなくなるため、DB とは別に保管してください。
+
+```bash
+docker compose up -d --build
 ```
 
 ## ライセンス

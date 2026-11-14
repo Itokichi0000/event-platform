@@ -253,11 +253,19 @@ Marmotは「メールなしで参加者に連絡する」手段と、会場限�
 | scanner_links  | event_id, token_hash, expires_at                                                                                                                                 | イベント終了まで                         |
 | pending_stamps | blinded_hex, signature_hex, expires_at                                                                                                                           | 24時間                                   |
 
+フェーズ1の実装で次を追加した（スキーマの正本は `apps/server/src/db/migrations.ts`、説明は `docs/PRIVACY.md`）。
+
+- `events` に `cover_image`, `cover_mime`, `cover_version`（カバー画像。外部URLは参加者のIPを漏らすため受け付けない）、`created_at`, `updated_at`
+- `checkin_buckets(event_id, bucket_start, count)`：15分ごとの来場件数。`stats` の来場推移に使う。どのチケットがどの時間帯に入場したかは記録しない
+- `scanner_links` に `id`, `label`, `revoked_at`, `created_at`
+- `spent` は `WITHOUT ROWID` で作り、保存順から消し込み順が分からないようにする
+
 **保存しないもの**：IPアドレス、User-Agent、メール、氏名、チケット発行時のブラインド値、発行と支払いの対応、Cookie、アクセス解析。リバースプロキシのログも既定で無効にした設定例を同梱する。
 
 ### API
 
 主催者向けの操作はNIP-98（Nostr署名によるHTTP認証）で守る。参加者向けは認証なし。
+ダッシュボードの定期更新のたびに拡張機能の署名を求めないよう、`POST /api/host/session` でNIP-98署名1回と引き換えに短期のセッショントークン（8時間、HMAC付き、サーバー保存なし）を発行し、他の主催者APIはこれでも受け付ける。
 
 | メソッドとパス                       | 認証       | 内容                                                                             |
 | ------------------------------------ | ---------- | -------------------------------------------------------------------------------- |
@@ -274,6 +282,21 @@ Marmotは「メールなしで参加者に連絡する」手段と、会場限�
 | `POST /api/events/:id/announcements` | 主催者     | お知らせ投稿（ページとルームの両方に出す）                                       |
 | `POST /api/events/:id/scanner-links` | 主催者     | 受付リンクの発行・失効                                                           |
 | `GET /api/events/:id/stats`          | 主催者     | 発行数、来場数、時刻別の来場推移（15分単位）                                     |
+
+フェーズ1で追加した補助API：
+
+| メソッドとパス                                                                   | 認証                 | 内容                                               |
+| -------------------------------------------------------------------------------- | -------------------- | -------------------------------------------------- |
+| `POST /api/host/session`                                                         | 主催者（NIP-98のみ） | セッショントークンの発行                           |
+| `GET /api/host/events`                                                           | 主催者               | 自分のイベント一覧（集計値つき）                   |
+| `GET /api/host/events/:id`                                                       | 主催者               | 主催者向けのイベント情報（非公開の場所を含む）     |
+| `GET /api/events/:id/cover`                                                      | なし                 | カバー画像                                         |
+| `PUT /api/events/:id/cover`、`DELETE /api/events/:id/cover`                      | 主催者               | カバー画像の登録・削除（512KBまで、JPEG/PNG/WebP） |
+| `DELETE /api/events/:id/announcements/:aid`                                      | 主催者               | お知らせの削除                                     |
+| `GET /api/events/:id/scanner-links`、`DELETE /api/events/:id/scanner-links/:lid` | 主催者               | 受付リンクの一覧・失効                             |
+| `GET /api/events/:id/scanner-session`                                            | 受付リンク           | 受付リンクの有効性の確認とカウンター               |
+
+「チケット保持者にだけ表示」の場所は、`issue` のレスポンスに含めて渡す。場所を見るためにあとからチケットを提示させないことで、閲覧と入場を結びつけない。
 
 無料イベントの乱用対策はIP制限ではなくPoWと招待コードで行う。IPベースの制限はTor利用者を締め出し、IPの記録も必要になるため採用しない。
 
