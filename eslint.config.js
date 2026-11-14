@@ -19,8 +19,11 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.test.ts'],
-    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+    files: ['**/*.test.ts', '**/test/**/*.ts', '**/e2e/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
   },
   prettier,
 );
