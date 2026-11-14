@@ -19,6 +19,23 @@ export default tseslint.config(
     },
   },
   {
+    // marmot-ts is alpha: only packages/messaging may import it (docs/SPEC.md §5).
+    files: ['apps/**/*.{ts,tsx}', 'packages/core/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@internet-privacy/marmot-ts', '@internet-privacy/marmot-ts/*'],
+              message: 'Use MessagingAdapter from @kamen/messaging instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['**/*.test.ts', '**/test/**/*.ts', '**/e2e/**/*.ts'],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
