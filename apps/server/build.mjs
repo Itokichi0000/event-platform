@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 
 await build({
   entryPoints: ['src/main.ts'],
-  outfile: 'dist/main.js',
+  outfile: 'dist/main.mjs',
   bundle: true,
   platform: 'node',
   target: 'node22',
