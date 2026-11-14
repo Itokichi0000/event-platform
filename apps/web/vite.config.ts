@@ -7,6 +7,9 @@ import { VitePWA } from 'vite-plugin-pwa';
 const API = process.env.KAMEN_API_URL ?? 'http://localhost:8787';
 // Keep the browser's Host header: NIP-98 auth checks the signed URL against it.
 const proxy = { '/api': { target: API, changeOrigin: false } };
+// Same CSP as deploy/Caddyfile, so `vite preview` (and the E2E tests) catch violations.
+const CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
 export default defineConfig({
   resolve: {
@@ -46,7 +49,7 @@ export default defineConfig({
     }),
   ],
   server: { proxy },
-  preview: { proxy },
+  preview: { proxy, headers: { 'Content-Security-Policy': CSP, 'Referrer-Policy': 'no-referrer' } },
   worker: {
     format: 'es',
   },

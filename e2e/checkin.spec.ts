@@ -6,6 +6,7 @@ async function createEvent(browser: Browser) {
   const context = await browser.newContext();
   await installNostrSigner(context);
   const page = await context.newPage();
+  watchErrors(page);
   await page.goto('/host');
   await page.getByRole('button', { name: 'Nostr拡張でログイン' }).click();
   await page.getByRole('link', { name: '新しいイベント' }).click();
@@ -28,9 +29,22 @@ async function createEvent(browser: Browser) {
   return { host: page, eventId, scannerUrl };
 }
 
+/** Fails the test on any Content-Security-Policy violation or uncaught page error. */
+function watchErrors(page: Page) {
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && /Content Security Policy/i.test(msg.text())) {
+      throw new Error(`CSP violation: ${msg.text()}`);
+    }
+  });
+  page.on('pageerror', (err) => {
+    throw err;
+  });
+}
+
 async function getTicket(browser: Browser, eventId: string) {
   const context = await browser.newContext({ ...devices['Pixel 7'] });
   const page = await context.newPage();
+  watchErrors(page);
   await page.goto(`/e/${eventId}`);
   await expect(page.getByRole('heading', { name: 'E2E Bitcoin Meetup' })).toBeVisible();
   await expect(page.getByText('残り 10 / 10 枠')).toBeVisible();
@@ -76,6 +90,7 @@ test('create → get ticket → check in → second check-in with the same QR is
 
   const scannerCtx = await browser.newContext({ ...devices['Pixel 7'] });
   const scanner = await scannerCtx.newPage();
+  watchErrors(scanner);
   await scanner.goto(scannerUrl);
   await expect(scanner.getByText('E2E Bitcoin Meetup')).toBeVisible();
   await expect(scanner.getByTestId('scanner-counter')).toHaveText('来場 0 / 発行 1');
