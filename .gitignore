@@ -9,3 +9,5 @@ coverage/
 *.sqlite-journal
 .DS_Store
 data/
+test-results/
+playwright-report/
