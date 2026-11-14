@@ -1,4 +1,4 @@
-import { ImagePlus, Lock, ShieldCheck, WifiOff } from 'lucide-react';
+import { ImagePlus, Lock, ShieldCheck, VenetianMask, WifiOff } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Layout, PageMessage, Spinner } from '@/components/Layout';
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { t } from '@/i18n';
-import type { EventInput, HostEvent } from '@/lib/api';
+import { request, type EventInput, type HostEvent } from '@/lib/api';
 import { fromLocalInput, toLocalInput } from '@/lib/format';
 import { prepareCover } from '@/lib/image';
 import { hostJson, hostRequest } from '@/lib/nostr';
@@ -29,6 +29,7 @@ function defaults(): EventInput {
     issuePolicy: 'pow',
     priceMsat: 0,
     offlineCheckin: false,
+    roomEnabled: true,
   };
 }
 
@@ -43,6 +44,14 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
   const [cover, setCover] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Whether this server has rooms (ROOM_RELAYS set).
+  const [roomsConfigured, setRoomsConfigured] = useState(false);
+  useEffect(() => {
+    request<{ rooms?: boolean }>('/api/health').then(
+      (h) => setRoomsConfigured(!!h.rooms),
+      () => {},
+    );
+  }, []);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,6 +69,7 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
           issuePolicy: ev.issuePolicy,
           priceMsat: ev.priceMsat,
           offlineCheckin: ev.offlineCheckin,
+          roomEnabled: ev.roomEnabled,
         }),
       () => setError(t.app.networkError),
     );
@@ -292,6 +302,24 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
             </p>
           </CardContent>
         </Card>
+
+        {roomsConfigured && (
+          <Card>
+            <CardContent className="flex flex-col gap-2 pt-5 text-sm">
+              <label className="flex items-center gap-2 font-medium">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-[var(--color-primary)]"
+                  checked={input.roomEnabled}
+                  onChange={(e) => set('roomEnabled', e.target.checked)}
+                />
+                <VenetianMask className="size-4 text-muted-foreground" />
+                {t.host.form.roomEnabled}
+              </label>
+              <p className="text-xs text-muted-foreground">{t.host.form.roomHint}</p>
+            </CardContent>
+          </Card>
+        )}
 
         {error && <Alert variant="destructive">{error}</Alert>}
         <Button type="submit" size="lg" disabled={busy}>

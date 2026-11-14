@@ -9,6 +9,7 @@ import {
   Rocket,
   ScanLine,
   Trash2,
+  VenetianMask,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router';
@@ -163,6 +164,25 @@ function Manage({ session }: { session: Parameters<typeof HostBar>[0]['session']
 
           <p className="text-xs text-muted-foreground">{t.host.manage.notHeld}</p>
 
+          {ev.role === 'owner' &&
+            ev.roomsConfigured &&
+            ev.roomEnabled &&
+            ev.status === 'published' && (
+              <div>
+                <Button
+                  variant="ghost"
+                  className="text-destructive"
+                  onClick={async () => {
+                    if (!confirm(t.host.manage.disbandConfirm)) return;
+                    await hostJson('POST', `/api/events/${ev.id}/room/disband`).catch(() => {});
+                    await reload();
+                  }}
+                >
+                  <VenetianMask />
+                  {t.host.manage.disbandRoom}
+                </Button>
+              </div>
+            )}
           {ev.status !== 'cancelled' && ev.role === 'owner' && (
             <div>
               <Button

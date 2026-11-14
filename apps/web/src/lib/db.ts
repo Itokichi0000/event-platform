@@ -27,6 +27,11 @@ export interface StoredTicket {
   createdAt: number;
   /** Set once the participant copied / saved a backup. */
   backedUpAt: number | null;
+  /**
+   * Pass for the event's room (blind-signed with a separate keyset, so it is unlinkable to the
+   * ticket). Removed once used. Not part of the backup string.
+   */
+  roomPass?: Token;
 }
 
 /**
@@ -96,7 +101,7 @@ export function newTicketId(): string {
 export async function saveTicket(
   token: Token,
   event: EventSnapshot,
-  opts: { backedUp?: boolean } = {},
+  opts: { backedUp?: boolean; roomPass?: Token } = {},
 ): Promise<StoredTicket> {
   const d = await db();
   const existing = await d.getFromIndex('tickets', 'bySecret', token.secret);
@@ -107,6 +112,7 @@ export async function saveTicket(
     event,
     createdAt: Date.now(),
     backedUpAt: opts.backedUp ? Date.now() : null,
+    ...(opts.roomPass ? { roomPass: opts.roomPass } : {}),
   };
   await d.add('tickets', ticket);
   return ticket;
@@ -146,4 +152,13 @@ export async function pendingQuotesForEvent(eventId: string): Promise<PendingQuo
 
 export async function deletePendingQuote(quoteId: string): Promise<void> {
   await (await db()).delete('pendingQuotes', quoteId);
+}
+
+/** Forget a used room pass. */
+export async function clearRoomPass(id: string): Promise<void> {
+  const d = await db();
+  const t = await d.get('tickets', id);
+  if (!t) return;
+  const { roomPass: _used, ...rest } = t;
+  await d.put('tickets', rest);
 }

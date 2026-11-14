@@ -17,6 +17,8 @@ const EventFormPage = lazy(() =>
 const HostEventPage = lazy(() =>
   import('@/pages/host/HostEventPage').then((m) => ({ default: m.HostEventPage })),
 );
+// Rooms pull in marmot-ts (~220 KB gzip); only loaded when a room is opened.
+const RoomPage = lazy(() => import('@/rooms/RoomPage').then((m) => ({ default: m.RoomPage })));
 const ScannerPage = lazy(() =>
   import('@/pages/ScannerPage').then((m) => ({ default: m.ScannerPage })),
 );
@@ -42,6 +44,7 @@ export function App() {
           <Route path="/host/e/:id" element={<HostEventPage />} />
           <Route path="/host/e/:id/edit" element={<EventFormPage />} />
           <Route path="/scan/:id" element={<ScannerPage />} />
+          <Route path="/r/:eventId" element={<RoomPage />} />
           <Route
             path="*"
             element={

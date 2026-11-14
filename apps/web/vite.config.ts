@@ -55,6 +55,8 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    // The marmot-ts chunk (~550 KB, ~155 KB gzip) is loaded only when a room is opened.
+    chunkSizeWarningLimit: 600,
     sourcemap: false,
   },
 });

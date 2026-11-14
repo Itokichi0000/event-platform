@@ -11,3 +11,8 @@ createRoot(root).render(
     <App />
   </StrictMode>,
 );
+
+// Delete rooms of events that ended more than 24 h ago, even if the disband was never seen.
+setTimeout(() => {
+  void import('./rooms/client').then((m) => m.purgeExpiredRooms()).catch(() => {});
+}, 3000);

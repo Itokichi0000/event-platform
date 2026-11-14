@@ -8,6 +8,7 @@ import {
   Sun,
   Trash2,
   Undo2,
+  VenetianMask,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
@@ -35,6 +36,8 @@ export function TicketPage() {
   const install = useInstallPrompt();
 
   const [returning, setReturning] = useState(false);
+  const [roomOpen, setRoomOpen] = useState<boolean | null>(null);
+  const [roomAvailable, setRoomAvailable] = useState(false);
   const [returnError, setReturnError] = useState(false);
 
   useEffect(() => {
@@ -45,7 +48,10 @@ export function TicketPage() {
         setTicket(tk ?? null);
         // Online: pick up cancellation, venue changes and the offline check-in setting.
         const fresh = tk ? await refreshTicket(tk) : null;
-        if (alive && fresh) setTicket(fresh.ticket);
+        if (alive && fresh) {
+          setTicket(fresh.ticket);
+          setRoomAvailable(fresh.event.roomAvailable);
+        }
       },
       () => alive && setTicket(null),
     );
@@ -53,6 +59,13 @@ export function TicketPage() {
       (s) => alive && setStorage(s),
       () => {},
     );
+    // Light module (no marmot-ts): whether a room was already joined on this device.
+    void import('@/rooms/store')
+      .then(async ({ roomStore }) => {
+        const tk = await getTicket(id);
+        if (tk && alive) setRoomOpen(!!(await roomStore.get(tk.token.eventId)));
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
@@ -207,6 +220,21 @@ export function TicketPage() {
             <p className="flex-1 text-sm">{t.ticket.installHint}</p>
             <Button size="sm" variant="outline" onClick={install.prompt}>
               {t.ticket.install}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {(roomOpen || (roomAvailable && tk.roomPass)) && (
+        <Card className="mt-4 border-primary/30">
+          <CardContent className="flex items-center gap-3 pt-5">
+            <VenetianMask className="size-6 shrink-0 text-primary" />
+            <div className="flex-1">
+              <p className="font-semibold">{t.room.title}</p>
+              <p className="text-xs text-muted-foreground">{t.room.intro}</p>
+            </div>
+            <Button asChild size="sm">
+              <Link to={`/r/${tk.token.eventId}`}>{roomOpen ? t.room.open : t.room.enter}</Link>
             </Button>
           </CardContent>
         </Card>

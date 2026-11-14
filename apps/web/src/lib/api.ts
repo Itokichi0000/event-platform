@@ -5,6 +5,7 @@ import type {
   PublicKeyset,
   RedeemPayload,
 } from '@kamen/core';
+import type { SignedEvent } from '@kamen/messaging';
 
 export interface Announcement {
   id: string;
@@ -31,6 +32,9 @@ export interface PublicEvent {
   status: 'draft' | 'published' | 'cancelled';
   coverVersion: number | null;
   offlineCheckin: boolean;
+  /** A room pass can be issued / the room can be entered right now. */
+  roomAvailable: boolean;
+  roomRelays: string[];
   keysets: PublicKeyset[];
   announcements: Announcement[];
 }
@@ -41,6 +45,9 @@ export interface HostEvent extends PublicEvent {
   redeemed: number;
   returned: number;
   walletConnected: boolean;
+  roomEnabled: boolean;
+  /** The server has rooms configured (ROOM_RELAYS). */
+  roomsConfigured: boolean;
   role: 'owner' | 'cohost';
   createdAt: number;
   updatedAt: number;
@@ -57,6 +64,7 @@ export interface EventInput {
   issuePolicy: IssuePolicy;
   priceMsat: number;
   offlineCheckin: boolean;
+  roomEnabled: boolean;
 }
 
 export interface Stats {
@@ -96,6 +104,13 @@ export interface ScannerSession {
   redeemed: number;
   offlineCheckin: boolean;
   status: PublicEvent['status'];
+}
+
+export interface RoomJoinResult {
+  roomId: string;
+  agentPubkey: string;
+  relays: string[];
+  welcome: SignedEvent;
 }
 
 export class ApiError extends Error {
@@ -153,13 +168,15 @@ export const api = {
       pow?: { challenge: PowChallenge; nonce: number };
       invite?: string;
       quoteId?: string;
-      outputs: { ticket: IssueRequest };
+      outputs: { ticket: IssueRequest; room?: IssueRequest };
     },
   ) =>
-    request<{ signatures: { ticket: IssueResponse }; location: string | null }>(
-      `${ev(id)}/issue`,
-      json(body),
-    ),
+    request<{
+      signatures: { ticket: IssueResponse; room?: IssueResponse };
+      location: string | null;
+    }>(`${ev(id)}/issue`, json(body)),
+  roomJoin: (id: string, pass: RedeemPayload, keyPackage: SignedEvent) =>
+    request<RoomJoinResult>(`${ev(id)}/room/join`, json({ pass, keyPackage })),
   returnTicket: (id: string, payload: RedeemPayload) =>
     request<{ ok: true }>(`${ev(id)}/return`, json(payload)),
   scannerSession: (id: string, token: string) =>

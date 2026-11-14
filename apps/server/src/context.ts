@@ -227,6 +227,8 @@ export function toPublicEvent(ctx: AppContext, row: EventRow) {
     coverVersion: row.coverImage ? row.coverVersion : null,
     offlineCheckin: row.offlineCheckin,
     roomAvailable: roomAvailable(ctx, row),
+    // Public anyway (participants' browsers connect to them); empty when rooms are off.
+    roomRelays: roomAvailable(ctx, row) ? ctx.config.roomRelays : [],
     keysets: publicKeysets(ctx, row.id),
     announcements: listAnnouncements(ctx, row.id),
   };

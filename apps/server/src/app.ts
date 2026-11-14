@@ -23,7 +23,8 @@ export function createApp(ctx: AppContext, opts: AppOptions = {}) {
     c.header('X-Content-Type-Options', 'nosniff');
   });
 
-  app.get('/api/health', (c) => c.json({ ok: true }));
+  // `rooms`: whether ROOM_RELAYS is configured (public information: the relays are, too).
+  app.get('/api/health', (c) => c.json({ ok: true, rooms: ctx.agent !== null }));
   app.route('/api', scannerRoutes(ctx));
   app.route('/api', hostRoutes(ctx));
   app.route('/api', hostAdminRoutes(ctx));

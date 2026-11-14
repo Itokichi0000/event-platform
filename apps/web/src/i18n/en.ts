@@ -195,6 +195,9 @@ export const en: Dict = {
       offline: 'Allow offline check-in',
       offlineHint:
         'Lets you check people in without signal. The QR code then contains a verification value, so check-in devices colluding with the server could link issuing and entry (attendees are told). Several devices checking in offline at the same time cannot fully prevent double entry.',
+      roomEnabled: 'Enable the room (encrypted chat for attendees)',
+      roomHint:
+        'Room announcements and chat are relayed by this server’s room agent, which can also read them. Attendees are told.',
       create: 'Create (draft)',
       save: 'Save',
       saving: 'Saving…',
@@ -231,6 +234,10 @@ export const en: Dict = {
       expires: 'Expires',
       notHeld:
         'What you cannot get as a host: an attendee list, anyone’s attendance history, or whose ticket was used.',
+      disbandRoom: 'Disband the room now',
+      disbandConfirm:
+        'Disband the room? The conversation ends for everyone. This cannot be undone.',
+      roomDisbanded: 'Room disbanded',
       ownerOnly: 'Only the event owner can change this',
       wallet: {
         title: 'Wallet (NWC)',
@@ -278,6 +285,37 @@ export const en: Dict = {
         },
       },
     },
+  },
+  room: {
+    title: 'Mask room',
+    enter: 'Enter the room',
+    open: 'Open the room',
+    intro:
+      'An encrypted chat only for this event’s attendees. You enter with a one-off key made just for this event, never your usual npub. You can attend the event without entering.',
+    privacy: [
+      'Relay operators only see ciphertext.',
+      'This server’s room agent administers the room, so it can read the conversation (it does not store it).',
+      'Entering connects this device directly to the relays, so they can see your IP address. Use Tor or a VPN if that matters to you.',
+      'The room is disbanded 24 hours after the event; the history and key on this device are deleted then too.',
+    ],
+    joining: 'Entering the room…',
+    joinFailed: 'Could not enter the room. Please try again shortly.',
+    noPass:
+      'This ticket has no room pass (it was issued while the room was unavailable, or the pass was already used).',
+    unavailable: 'The room for this event is not available.',
+    you: 'You',
+    host: 'Host announcement',
+    placeholder: 'Message',
+    send: 'Send',
+    sending: 'Sending…',
+    empty: 'No messages yet. Say hello!',
+    disbanded: 'This room has been disbanded. Its history and key were deleted from this device.',
+    removed: 'You were removed from this room.',
+    leave: 'Leave room',
+    leaveConfirm:
+      'Leave the room? The history and key on this device are deleted and the same ticket cannot enter again.',
+    yourMask: 'Your mask',
+    connecting: 'Connecting…',
   },
   scanner: {
     title: 'Check-in',

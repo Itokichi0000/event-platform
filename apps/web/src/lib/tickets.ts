@@ -60,17 +60,37 @@ async function issueAndSave(
 ): Promise<StoredTicket> {
   const keyset = ticketKeyset(event);
   const pending = prepareIssue(keyset);
+  // The room pass rides along in the same request, blinded under the room keyset.
+  const roomKeyset = event.roomAvailable ? event.keysets.find((k) => k.kind === 'room') : undefined;
+  const roomPending = roomKeyset ? prepareIssue(roomKeyset) : undefined;
   onStage('issue');
   const res = await api.issue(event.id, {
     ...condition,
-    outputs: { ticket: toIssueRequest(pending) },
+    outputs: {
+      ticket: toIssueRequest(pending),
+      ...(roomPending ? { room: toIssueRequest(roomPending) } : {}),
+    },
   });
   // Throws if the signature was not made with the advertised public key.
   const proof = finalizeIssue(pending, res.signatures.ticket, keyset);
+  let roomPass: Token | undefined;
+  if (roomKeyset && roomPending && res.signatures.room) {
+    try {
+      roomPass = {
+        kind: 'room',
+        eventId: event.id,
+        ...finalizeIssue(roomPending, res.signatures.room, roomKeyset),
+      };
+    } catch {
+      // A bad room signature must not cost the participant their ticket.
+      roomPass = undefined;
+    }
+  }
   onStage('save');
   return saveTicket(
     { kind: 'ticket', eventId: event.id, ...proof },
     snapshotOf(event, res.location),
+    roomPass ? { roomPass } : {},
   );
 }
 
