@@ -1,5 +1,6 @@
 # Self-hosting: `cp .env.example .env`, set KAMEN_MASTER_KEY and KAMEN_DOMAIN, then
 #   docker compose up -d --build
+# Rooms are on when ROOM_RELAYS is set (see .env.example), off when it is empty.
 services:
   server:
     build: { context: ., target: server }
@@ -8,11 +9,38 @@ services:
       KAMEN_MASTER_KEY: ${KAMEN_MASTER_KEY:?set KAMEN_MASTER_KEY (openssl rand -hex 32)}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       POW_DIFFICULTY: ${POW_DIFFICULTY:-18}
+      ROOM_RELAYS: ${ROOM_RELAYS:-}
+      AGENT_URL: http://agent:8789
     volumes:
       - kamen-data:/data
     # The API is reachable only through Caddy.
     expose:
       - '8787'
+
+  # Room agent (docs/SPEC.md §5). Idles when ROOM_RELAYS is empty; reachable only inside this
+  # compose network. It administers the Marmot rooms and can read them (docs/PRIVACY.md).
+  agent:
+    build: { context: ., target: server }
+    restart: unless-stopped
+    command: ['node', 'dist/agent.mjs']
+    environment:
+      KAMEN_MASTER_KEY: ${KAMEN_MASTER_KEY:?set KAMEN_MASTER_KEY (openssl rand -hex 32)}
+      ROOM_RELAYS: ${ROOM_RELAYS:-}
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: '8789'
+      AGENT_DB_PATH: /data/agent.sqlite
+    volumes:
+      - kamen-agent:/data
+    expose:
+      - '8789'
+
+  # Local relay for development and testing: `docker compose --profile devrelay up`, then
+  # ROOM_RELAYS=ws://localhost:7777. Not for production.
+  devrelay:
+    image: scsibug/nostr-rs-relay:0.9.0
+    ports:
+      - '127.0.0.1:7777:8080'
+    profiles: [devrelay]
 
   web:
     build: { context: ., target: web }
@@ -20,6 +48,8 @@ services:
     depends_on: [server]
     environment:
       KAMEN_DOMAIN: ${KAMEN_DOMAIN:-localhost}
+      # Added to the CSP connect-src so browsers may reach the room relays.
+      ROOM_RELAYS: ${ROOM_RELAYS:-}
     ports:
       - '80:80'
       - '443:443'
@@ -29,5 +59,6 @@ services:
 
 volumes:
   kamen-data:
+  kamen-agent:
   caddy-data:
   caddy-config:

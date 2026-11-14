@@ -3,8 +3,10 @@
 import { build } from 'esbuild';
 
 await build({
-  entryPoints: ['src/main.ts'],
-  outfile: 'dist/main.mjs',
+  // API server and room agent (a separate process sharing the same image).
+  entryPoints: { main: 'src/main.ts', agent: 'src/agent/main.ts' },
+  outdir: 'dist',
+  outExtension: { '.js': '.mjs' },
   bundle: true,
   platform: 'node',
   target: 'node22',

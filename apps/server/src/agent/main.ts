@@ -6,6 +6,12 @@ import { RoomService } from './rooms.js';
 import { AgentStore } from './store.js';
 
 const config = loadAgentConfig();
+if (config.relays.length === 0) {
+  // Rooms are disabled. Stay idle (instead of exiting) so `docker compose up` stays quiet.
+  console.log('kamen room agent: ROOM_RELAYS is not set, rooms are disabled; idling');
+  setInterval(() => {}, 1 << 30);
+  await new Promise(() => {});
+}
 const store = new AgentStore(config.dbPath, config.masterKey);
 const rooms = new RoomService(
   store,

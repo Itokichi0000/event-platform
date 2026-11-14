@@ -8,8 +8,12 @@ const API = process.env.KAMEN_API_URL ?? 'http://localhost:8787';
 // Keep the browser's Host header: NIP-98 auth checks the signed URL against it.
 const proxy = { '/api': { target: API, changeOrigin: false } };
 // Same CSP as deploy/Caddyfile, so `vite preview` (and the E2E tests) catch violations.
-const CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+// Room relays (ROOM_RELAYS) must be allowed in connect-src, as in the Caddyfile.
+const CONNECT = [
+  "'self'",
+  ...(process.env.KAMEN_CSP_CONNECT ?? '').split(/[\s,]+/).filter(Boolean),
+].join(' ');
+const CSP = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ${CONNECT}; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
 
 export default defineConfig({
   resolve: {
