@@ -217,3 +217,55 @@ describe('scanner links', () => {
 describe('ORIGIN constant', () => {
   it('is a valid URL', () => expect(new URL(ORIGIN).host).toBe('kamen.test'));
 });
+
+describe('host sessions', () => {
+  it('one NIP-98 login yields a bearer token for later calls', async () => {
+    const h = setup();
+    const host = makeHost(h);
+    const login = await host.call('POST', '/api/host/session');
+    expect(login.status).toBe(200);
+    const { token, expiresAt } = await json(login);
+    expect(token).toMatch(/^kh1\./);
+    expect(expiresAt).toBeGreaterThan(h.ctx.now());
+    const auth = { authorization: `Bearer ${token}` };
+    expect((await h.request('/api/host/events', { headers: auth })).status).toBe(200);
+    expect((await h.request('/api/host/events', { headers: auth })).status).toBe(200);
+
+    const res = await h.request('/api/events', {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 's',
+        startsAt: h.ctx.now() + HOUR,
+        endsAt: h.ctx.now() + 2 * HOUR,
+        capacity: 2,
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect((await json(res)).hostPubkey).toBe(host.pubkey);
+  });
+
+  it('rejects tampered and expired tokens, and cannot mint a session from a session', async () => {
+    const h = setup();
+    const host = makeHost(h);
+    const { token } = await json(await host.call('POST', '/api/host/session'));
+    const tampered = token.slice(0, -2) + (token.endsWith('A') ? 'BB' : 'AA');
+    expect(
+      (await h.request('/api/host/events', { headers: { authorization: `Bearer ${tampered}` } }))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await h.request('/api/host/session', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).status,
+    ).toBe(401);
+    h.clock.t += 9 * HOUR;
+    expect(
+      (await h.request('/api/host/events', { headers: { authorization: `Bearer ${token}` } }))
+        .status,
+    ).toBe(401);
+  });
+});

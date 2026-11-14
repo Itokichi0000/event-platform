@@ -6,6 +6,7 @@
 import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import { verifyEvent, type Event as NostrEvent } from 'nostr-tools/pure';
+import { verifyHostSession } from './host-session.js';
 import { sha256Hex } from './secrets.js';
 import { TtlSet } from './ttl-set.js';
 
@@ -15,6 +16,8 @@ const MAX_SKEW_SECONDS = 60;
 export interface Nip98Options {
   publicOrigin: string | undefined;
   now?: () => number;
+  /** When set, `Authorization: Bearer kh1.…` host session tokens are accepted as well. */
+  sessionKey?: Uint8Array;
 }
 
 export type HostEnv = { Variables: { hostPubkey: string } };
@@ -33,6 +36,12 @@ export function nip98Auth(opts: Nip98Options) {
 
   return createMiddleware<HostEnv>(async (c, next) => {
     const header = c.req.header('authorization') ?? '';
+    if (opts.sessionKey && header.startsWith('Bearer ')) {
+      const pubkey = verifyHostSession(opts.sessionKey, header.slice(7).trim(), now());
+      if (!pubkey) fail('invalid or expired host session');
+      c.set('hostPubkey', pubkey);
+      return next();
+    }
     const m = /^Nostr\s+([A-Za-z0-9+/=_-]+)$/.exec(header);
     if (!m) fail('missing NIP-98 authorization');
 

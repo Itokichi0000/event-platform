@@ -14,7 +14,8 @@ import {
   scannerLinks,
 } from '../db/schema.js';
 import { nip98Auth, type HostEnv } from '../lib/nip98.js';
-import { randomId, randomToken, sha256Hex } from '../lib/secrets.js';
+import { createHostSession } from '../lib/host-session.js';
+import { deriveKey, randomId, randomToken, sha256Hex } from '../lib/secrets.js';
 import { jsonBody } from '../lib/validate.js';
 
 export const MAX_COVER_BYTES = 512 * 1024;
@@ -54,7 +55,9 @@ const scannerLinkSchema = z.object({
 
 export function hostRoutes(ctx: AppContext) {
   const app = new Hono<HostEnv>();
-  const auth = nip98Auth({ publicOrigin: ctx.config.publicOrigin, now: ctx.now });
+  const sessionKey = deriveKey(ctx.config.masterKey, 'host-session');
+  const strictAuth = nip98Auth({ publicOrigin: ctx.config.publicOrigin, now: ctx.now });
+  const auth = nip98Auth({ publicOrigin: ctx.config.publicOrigin, now: ctx.now, sessionKey });
   const limit = bodyLimit({ maxSize: 64 * 1024, onError: () => apiError(413, 'body_too_large') });
 
   // Every endpoint below is NIP-98 protected; host registration is implicit on first use.
@@ -68,6 +71,11 @@ export function hostRoutes(ctx: AppContext) {
     await next();
   });
   const host = [limit, auth, register] as const;
+
+  /** Exchange one NIP-98 signature for a short-lived session token (see lib/host-session.ts). */
+  app.post('/host/session', limit, strictAuth, register, (c) => {
+    return c.json(createHostSession(sessionKey, c.get('hostPubkey'), ctx.now()));
+  });
 
   app.get('/host/events', ...host, (c) => {
     const rows = ctx.db
