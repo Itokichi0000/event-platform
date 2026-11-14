@@ -50,7 +50,12 @@ export function createPowChallenge(
   now = Math.floor(Date.now() / 1000),
 ): PowChallenge {
   assertDifficulty(difficulty);
-  const body = { eventId, salt: bytesToHex(randomBytes(16)), expiresAt: now + ttlSeconds, difficulty };
+  const body = {
+    eventId,
+    salt: bytesToHex(randomBytes(16)),
+    expiresAt: now + ttlSeconds,
+    difficulty,
+  };
   return { ...body, id: bytesToHex(hmac(sha256, key, macInput(body))) };
 }
 
