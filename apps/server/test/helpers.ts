@@ -16,11 +16,12 @@ import { loadConfig } from '../src/config.js';
 import { createContext, type AppContext } from '../src/context.js';
 import { openDatabase } from '../src/db/index.js';
 import { MockWalletBackend } from '../src/lib/wallet.js';
+import type { AgentClient } from '../src/lib/agent-client.js';
 
 export const ORIGIN = 'http://kamen.test';
 export const HOUR = 3600_000;
 
-export function setup() {
+export function setup(opts: { agent?: AgentClient | null } = {}) {
   const config = loadConfig({
     KAMEN_MASTER_KEY: '11'.repeat(32),
     POW_DIFFICULTY: '4',
@@ -32,6 +33,7 @@ export function setup() {
   const ctx: AppContext = createContext(db, config, {
     now: () => clock.t,
     walletFactory: wallet.factory,
+    agent: opts.agent ?? null,
   });
   const logs: string[] = [];
   const app = createApp(ctx, { log: (l) => logs.push(l) });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseRelays } from './lib/relays.js';
 
 const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(8787),
@@ -25,6 +26,10 @@ const schema = z.object({
   KAMEN_MOCK_WALLET: z.enum(['0', '1']).default('0'),
   KAMEN_MOCK_WALLET_SETTLE_MS: z.coerce.number().int().min(0).default(1500),
   NODE_ENV: z.string().optional(),
+  /** Relays for event rooms (space- or comma-separated). Unset = rooms disabled. */
+  ROOM_RELAYS: z.string().default(''),
+  /** Internal URL of the room agent process. */
+  AGENT_URL: z.url().default('http://127.0.0.1:8789'),
 });
 
 export interface Config {
@@ -38,6 +43,8 @@ export interface Config {
   invoiceTtlSeconds: number;
   /** null = use real NWC wallets. */
   mockWalletSettleMs: number | null;
+  roomRelays: string[];
+  agentUrl: string;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -62,5 +69,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     publicOrigin: e.PUBLIC_ORIGIN ? new URL(e.PUBLIC_ORIGIN).origin : undefined,
     invoiceTtlSeconds: e.INVOICE_TTL_SECONDS,
     mockWalletSettleMs: e.KAMEN_MOCK_WALLET === '1' ? e.KAMEN_MOCK_WALLET_SETTLE_MS : null,
+    roomRelays: parseRelays(e.ROOM_RELAYS),
+    agentUrl: e.AGENT_URL,
   };
 }

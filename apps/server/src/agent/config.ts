@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { parseRelays } from '../lib/relays.js';
+
+export { parseRelays };
 
 const schema = z.object({
   KAMEN_MASTER_KEY: z.string().regex(/^[0-9a-f]{64}$/, 'KAMEN_MASTER_KEY must be 32-byte hex'),
@@ -10,16 +13,6 @@ const schema = z.object({
   /** How long join requests are collected into one commit. */
   AGENT_BATCH_MS: z.coerce.number().int().min(0).max(10_000).default(1500),
 });
-
-/** Space- or comma-separated ws(s) URLs. Invalid entries are rejected. */
-export function parseRelays(value: string): string[] {
-  const list = value.split(/[\s,]+/).filter(Boolean);
-  for (const url of list) {
-    const u = new URL(url);
-    if (u.protocol !== 'wss:' && u.protocol !== 'ws:') throw new Error(`not a relay URL: ${url}`);
-  }
-  return [...new Set(list)];
-}
 
 export interface AgentConfig {
   masterKey: Uint8Array;

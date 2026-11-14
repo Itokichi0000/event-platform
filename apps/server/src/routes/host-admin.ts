@@ -194,5 +194,22 @@ export function hostAdminRoutes(ctx: AppContext) {
     return c.body(null, 204);
   });
 
+  /** End the room now (e.g. against trolls). New joins stop; the agent disbands the group. */
+  app.post('/events/:id/room/disband', ...host, async (c) => {
+    const row = owned(c.req.param('id'), c.get('hostPubkey'));
+    ctx.db
+      .update(events)
+      .set({ roomEnabled: false, updatedAt: ctx.now() })
+      .where(eq(events.id, row.id))
+      .run();
+    if (!ctx.agent) return c.json({ disbanded: false });
+    try {
+      await ctx.agent.disband(row.id);
+    } catch {
+      apiError(502, 'agent_unreachable');
+    }
+    return c.json({ disbanded: true });
+  });
+
   return app;
 }

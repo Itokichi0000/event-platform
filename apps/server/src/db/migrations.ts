@@ -145,4 +145,7 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX invite_codes_event ON invite_codes(event_id);
   `,
+  /* 3: phase 3 (rooms) */ `
+  ALTER TABLE events ADD COLUMN room_enabled INTEGER NOT NULL DEFAULT 1 CHECK (room_enabled IN (0, 1));
+  `,
 ];

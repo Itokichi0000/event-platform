@@ -178,7 +178,7 @@ describe('issuing', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ pow: await solveQuote(h, id), outputs }),
       });
-    expect((await send({ ticket: out, room: out })).status).toBe(400);
+    expect((await send({ ticket: out, stamp: out })).status).toBe(400);
     expect((await send({ ticket: { ...out, keysetId: '00aaaaaaaaaaaaaa' } })).status).toBe(422);
     expect((await send({ ticket: { ...out, B_: '02' + '00'.repeat(32) } })).status).toBe(422);
   });

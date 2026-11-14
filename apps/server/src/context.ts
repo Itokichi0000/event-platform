@@ -1,4 +1,10 @@
-import { keysetFromPrivateKey, type Keyset, type KeysetKind, type PublicKeyset } from '@kamen/core';
+import {
+  generateKeyset,
+  keysetFromPrivateKey,
+  type Keyset,
+  type KeysetKind,
+  type PublicKeyset,
+} from '@kamen/core';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import type { Config } from './config.js';
@@ -15,6 +21,7 @@ import { PaymentHub } from './lib/payments.js';
 import { deriveKey, KeyVault } from './lib/secrets.js';
 import { TtlSet } from './lib/ttl-set.js';
 import { MockWalletBackend, nwcWalletFactory, type WalletFactory } from './lib/wallet.js';
+import { httpAgentClient, type AgentClient } from './lib/agent-client.js';
 
 export interface AppContext {
   db: Db;
@@ -24,13 +31,19 @@ export interface AppContext {
   inviteKey: Uint8Array;
   usedPow: TtlSet;
   payments: PaymentHub;
+  /** null when rooms are disabled (no ROOM_RELAYS). */
+  agent: AgentClient | null;
   now: () => number;
 }
 
 export interface ContextOptions {
   now?: () => number;
   walletFactory?: WalletFactory;
+  agent?: AgentClient | null;
 }
+
+/** Rooms stay joinable until they are disbanded 24 h after the event. */
+export const ROOM_OPEN_AFTER_END_MS = 24 * 60 * 60 * 1000;
 
 export function createContext(db: Db, config: Config, opts: ContextOptions = {}): AppContext {
   const now = opts.now ?? Date.now;
@@ -47,6 +60,12 @@ export function createContext(db: Db, config: Config, opts: ContextOptions = {})
     inviteKey: deriveKey(config.masterKey, 'invite'),
     usedPow: new TtlSet(),
     payments: new PaymentHub(factory, (eventId, hash) => markPaid(ctx, eventId, hash), now),
+    agent:
+      opts.agent !== undefined
+        ? opts.agent
+        : config.roomRelays.length > 0
+          ? httpAgentClient(config.agentUrl, config.masterKey)
+          : null,
     now,
   };
   return ctx;
@@ -68,7 +87,7 @@ export function markPaid(ctx: AppContext, eventId: string, paymentHash: string):
 }
 
 export function apiError(
-  status: 400 | 401 | 402 | 403 | 404 | 409 | 410 | 413 | 422 | 502,
+  status: 400 | 401 | 402 | 403 | 404 | 409 | 410 | 413 | 422 | 502 | 503,
   code: string,
 ): never {
   throw new HTTPException(status, { res: Response.json({ error: code }, { status }) });
@@ -142,6 +161,37 @@ export function listAnnouncements(ctx: AppContext, eventId: string) {
     .reverse();
 }
 
+/** Whether participants may get a room pass / enter the room now. */
+export function roomAvailable(ctx: AppContext, row: EventRow): boolean {
+  return (
+    ctx.agent !== null &&
+    row.roomEnabled &&
+    row.status === 'published' &&
+    ctx.now() < row.endsAt + ROOM_OPEN_AFTER_END_MS
+  );
+}
+
+/** Events created before phase 3 get their room keyset on first use. */
+export function ensureRoomKeyset(ctx: AppContext, eventId: string): void {
+  const exists = ctx.db
+    .select({ id: keysets.id })
+    .from(keysets)
+    .where(and(eq(keysets.eventId, eventId), eq(keysets.kind, 'room')))
+    .get();
+  if (exists) return;
+  const ks = generateKeyset('room');
+  ctx.db
+    .insert(keysets)
+    .values({
+      id: ks.id,
+      eventId,
+      kind: 'room',
+      publicKey: ks.publicKey,
+      privateKeyEnc: ctx.vault.encrypt(ks.privateKey, ks.id),
+    })
+    .run();
+}
+
 /** Paid but not yet issued tickets hold a seat (they must always be issuable). */
 export function paidUnissued(ctx: AppContext, eventId: string): number {
   return ctx.db
@@ -176,6 +226,7 @@ export function toPublicEvent(ctx: AppContext, row: EventRow) {
     status: row.status,
     coverVersion: row.coverImage ? row.coverVersion : null,
     offlineCheckin: row.offlineCheckin,
+    roomAvailable: roomAvailable(ctx, row),
     keysets: publicKeysets(ctx, row.id),
     announcements: listAnnouncements(ctx, row.id),
   };
@@ -191,6 +242,8 @@ export function toHostEvent(ctx: AppContext, row: EventRow, role: HostRole) {
     redeemed: row.redeemedCount,
     returned: row.returnedCount,
     walletConnected: row.nwcEnc !== null,
+    roomEnabled: row.roomEnabled,
+    roomsConfigured: ctx.agent !== null,
     role,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

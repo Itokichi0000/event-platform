@@ -13,15 +13,19 @@ import {
 } from '@kamen/core';
 import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import {
   apiError,
+  ensureRoomKeyset,
   getEvent,
   loadKeyset,
   remainingSeats,
+  roomAvailable,
   toPublicEvent,
   type AppContext,
 } from '../context.js';
+import { AgentRequestError } from '../lib/agent-client.js';
 import { quotes, type EventRow } from '../db/schema.js';
 import { inviteCodeHash } from '../lib/invite.js';
 import { randomToken } from '../lib/secrets.js';
@@ -52,8 +56,8 @@ const issueSchema = z.object({
     .string()
     .regex(/^[A-Za-z0-9_-]{20,64}$/)
     .optional(),
-  // Keyed by kind so the room pass can be issued alongside the ticket in phase 3.
-  outputs: z.object({ ticket: blindedOutput }).strict(),
+  // Keyed by kind: the room pass is signed with its own keyset (unlinkable to the ticket).
+  outputs: z.object({ ticket: blindedOutput, room: blindedOutput.optional() }).strict(),
 });
 
 /** Exactly what `toRedeemPayload()` produces: no DLEQ, no blinding factor. */
@@ -65,8 +69,19 @@ export const proofSchema = z
   })
   .strict();
 
-/** Kinds that may be issued at the moment. 'room' is added in phase 3. */
-const ISSUABLE_KINDS: readonly KeysetKind[] = ['ticket'];
+const joinSchema = z.object({
+  pass: z.lazy(() => proofSchema),
+  /** Kind 30443 key package signed by the participant's per-event key (not published to relays). */
+  keyPackage: z.object({
+    id: z.string().regex(/^[0-9a-f]{64}$/),
+    pubkey: z.string().regex(/^[0-9a-f]{64}$/),
+    created_at: z.number().int(),
+    kind: z.literal(30443),
+    tags: z.array(z.array(z.string())).max(50),
+    content: z.string().max(60_000),
+    sig: z.string().regex(/^[0-9a-f]{128}$/),
+  }),
+});
 
 /** Expired quotes are still looked up for a while in case the payment landed at the deadline. */
 const LATE_PAYMENT_GRACE_MS = 60 * 60 * 1000;
@@ -157,12 +172,14 @@ export function publicRoutes(ctx: AppContext) {
     const row = getEvent(ctx, c.req.param('id'));
     assertIssuable(ctx, row);
 
-    const requested = Object.keys(body.outputs) as KeysetKind[];
-    for (const kind of requested)
-      if (!ISSUABLE_KINDS.includes(kind)) apiError(422, 'unsupported_kind');
+    // A room pass is issued only while the room is available; otherwise it is silently omitted
+    // so that getting a ticket never depends on the room.
+    const withRoom = body.outputs.room !== undefined && roomAvailable(ctx, row);
+    if (withRoom) ensureRoomKeyset(ctx, row.id);
+    const requested: ('ticket' | 'room')[] = withRoom ? ['ticket', 'room'] : ['ticket'];
     const keysets = requested.map((kind) => ({ kind, keyset: loadKeyset(ctx, row.id, kind) }));
     for (const { kind, keyset } of keysets) {
-      const out = body.outputs[kind as 'ticket'];
+      const out = body.outputs[kind]!;
       if (out.keysetId !== keyset.id) apiError(422, 'keyset_mismatch');
       try {
         pointFromHex(out.B_);
@@ -231,7 +248,7 @@ export function publicRoutes(ctx: AppContext) {
       }
       const out: Partial<Record<KeysetKind, IssueResponse>> = {};
       for (const { kind, keyset } of keysets) {
-        out[kind] = signIssueRequest(body.outputs[kind as 'ticket'], keyset);
+        out[kind] = signIssueRequest(body.outputs[kind]!, keyset);
       }
       return out;
     })();
@@ -272,6 +289,41 @@ export function publicRoutes(ctx: AppContext) {
     })();
     return c.json({ ok: true });
   });
+
+  /**
+   * Enter the event's room: spend the room pass, then ask the room agent to add the participant's
+   * per-event key. If the agent fails, the pass is restored. The pass is a blind signature from
+   * the room keyset, so it cannot be linked to the ticket or to the issuance.
+   */
+  app.post(
+    '/events/:id/room/join',
+    bodyLimit({ maxSize: 96 * 1024, onError: () => apiError(413, 'body_too_large') }),
+    async (c) => {
+      const body = await jsonBody(c, joinSchema);
+      const row = getEvent(ctx, c.req.param('id'));
+      if (!ctx.agent || !roomAvailable(ctx, row)) apiError(409, 'room_unavailable');
+      ensureRoomKeyset(ctx, row.id);
+      const keyset = loadKeyset(ctx, row.id, 'room');
+      if (body.pass.keysetId !== keyset.id || !verifyProofWithKeyset(body.pass, keyset)) {
+        apiError(422, 'invalid_pass');
+      }
+      const y = spentKey(body.pass.secret);
+      const sqlite = ctx.db.$client;
+      const ins = sqlite
+        .prepare('INSERT INTO spent (keyset_id, y) VALUES (?, ?) ON CONFLICT DO NOTHING')
+        .run(keyset.id, y);
+      if (ins.changes === 0) apiError(409, 'pass_already_used');
+      try {
+        return c.json(await ctx.agent.join(row.id, row.title, row.endsAt, body.keyPackage));
+      } catch (e) {
+        sqlite.prepare('DELETE FROM spent WHERE keyset_id = ? AND y = ?').run(keyset.id, y);
+        if (e instanceof AgentRequestError && e.code === 'invalid_key_package') {
+          apiError(400, 'invalid_key_package');
+        }
+        apiError(503, 'room_unavailable');
+      }
+    },
+  );
 
   return app;
 }

@@ -21,6 +21,7 @@ export const events = sqliteTable('events', {
   redeemedCount: integer('redeemed_count').notNull(),
   returnedCount: integer('returned_count').notNull(),
   offlineCheckin: integer('offline_checkin', { mode: 'boolean' }).notNull(),
+  roomEnabled: integer('room_enabled', { mode: 'boolean' }).notNull(),
   nwcEnc: text('nwc_enc'),
   status: text('status', { enum: ['draft', 'published', 'cancelled'] }).notNull(),
   coverImage: blob('cover_image', { mode: 'buffer' }),

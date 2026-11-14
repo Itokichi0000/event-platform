@@ -35,6 +35,7 @@ const eventFields = z.object({
   issuePolicy: z.enum(['pow', 'invite', 'paid']),
   priceMsat: z.number().int().min(0).max(100_000_000_000),
   offlineCheckin: z.boolean(),
+  roomEnabled: z.boolean(),
 });
 
 const createSchema = eventFields
@@ -45,6 +46,7 @@ const createSchema = eventFields
     issuePolicy: eventFields.shape.issuePolicy.default('pow'),
     priceMsat: eventFields.shape.priceMsat.default(0),
     offlineCheckin: eventFields.shape.offlineCheckin.default(false),
+    roomEnabled: eventFields.shape.roomEnabled.default(true),
   })
   .refine((e) => e.endsAt > e.startsAt, 'endsAt must be after startsAt');
 
@@ -99,6 +101,8 @@ export function hostRoutes(ctx: AppContext) {
     const now = ctx.now();
     const id = randomId();
     const ticket = generateKeyset('ticket');
+    // Separate keyset for room passes, so a pass cannot be linked to the ticket (docs/SPEC.md §4).
+    const room = generateKeyset('room');
     ctx.db.transaction((tx) => {
       tx.insert(events)
         .values({
@@ -115,15 +119,17 @@ export function hostRoutes(ctx: AppContext) {
           updatedAt: now,
         })
         .run();
-      tx.insert(keysets)
-        .values({
-          id: ticket.id,
-          eventId: id,
-          kind: 'ticket',
-          publicKey: ticket.publicKey,
-          privateKeyEnc: ctx.vault.encrypt(ticket.privateKey, ticket.id),
-        })
-        .run();
+      for (const ks of [ticket, room]) {
+        tx.insert(keysets)
+          .values({
+            id: ks.id,
+            eventId: id,
+            kind: ks.kind,
+            publicKey: ks.publicKey,
+            privateKeyEnc: ctx.vault.encrypt(ks.privateKey, ks.id),
+          })
+          .run();
+      }
     });
     const row = getManagedEvent(ctx, id, c.get('hostPubkey'));
     return c.json(toHostEvent(ctx, row, row.role), 201);
@@ -205,7 +211,8 @@ export function hostRoutes(ctx: AppContext) {
     const { body } = await jsonBody(c, announcementSchema);
     const item = { id: randomId(16), eventId: row.id, body, createdAt: ctx.now() };
     ctx.db.insert(announcements).values(item).run();
-    // Phase 3: also post to the event's Marmot room.
+    // Also post into the event's room (best effort: the page always shows it).
+    if (ctx.agent && row.roomEnabled) void ctx.agent.announce(row.id, body).catch(() => {});
     return c.json({ id: item.id, body: item.body, createdAt: item.createdAt }, 201);
   });
 

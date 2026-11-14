@@ -404,7 +404,7 @@ describe('retention job', () => {
     h.clock.t += 48 * HOUR;
     r = runCleanup(h.ctx);
     expect(r).toMatchObject({
-      retiredKeysets: 1,
+      retiredKeysets: 2,
       deletedSpent: 1,
       clearedWallets: 1,
       deletedScannerLinks: 1,
@@ -414,11 +414,14 @@ describe('retention job', () => {
     const q = (sql: string) => h.db.$client.prepare(sql).all();
     expect(q('SELECT * FROM quotes')).toEqual([]);
     expect(q('SELECT * FROM spent')).toEqual([]);
-    expect(q('SELECT private_key_enc FROM keysets')).toEqual([{ private_key_enc: null }]);
+    expect(q('SELECT private_key_enc FROM keysets')).toEqual([
+      { private_key_enc: null },
+      { private_key_enc: null },
+    ]);
     expect(q('SELECT nwc_enc, issued_count, redeemed_count FROM events')).toEqual([
       { nwc_enc: null, issued_count: 1, redeemed_count: 1 },
     ]);
-    expect((await getPublicEvent(h, id)).keysets).toHaveLength(1); // public key stays
+    expect((await getPublicEvent(h, id)).keysets).toHaveLength(2); // public keys stay
   });
 
   it('removes stale unpaid quotes but keeps paid ones', async () => {

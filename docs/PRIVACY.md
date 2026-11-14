@@ -3,7 +3,7 @@
 この文書はプロジェクトの信用の根拠です。テーブル・列・ログ出力を追加・変更するコミットでは、
 必ずこの文書も同じコミットで更新してください（CLAUDE.md のルール）。
 
-最終更新：フェーズ2（運営機能）
+最終更新：フェーズ3（ルーム）
 
 各項目は `apps/server/test/privacy.test.ts` と `apps/server/test/phase2.test.ts` でテストとして確認しています。
 
@@ -12,18 +12,18 @@
 サーバーの DB にあるのは次の10テーブルだけです（スキーマの正本は `apps/server/src/db/migrations.ts`）。
 参加者（人）を表すテーブルはなく、発行と支払い・消し込み・IP アドレス・入場時刻を結びつける列もありません。
 
-| テーブル        | 列                                                                                                                                                                                                                                                                         | 何のためか                                              | 保持期間                                       |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------- |
-| hosts           | pubkey                                                                                                                                                                                                                                                                     | 主催者の識別（NIP-98 で初めて操作したとき登録）         | 退会まで                                       |
-| events          | id, host_pubkey, title, description, starts_at, ends_at, location, location_visibility, capacity, issue_policy, price_msat, issued_count, redeemed_count, returned_count, offline_checkin, nwc_enc, status, cover_image, cover_mime, cover_version, created_at, updated_at | イベント情報と集計値                                    | 主催者が削除するまで（nwc_enc は終了48時間後） |
-| event_cohosts   | event_id, pubkey                                                                                                                                                                                                                                                           | 共同主催者                                              | イベントと同じ                                 |
-| keysets         | id, event_id または host_pubkey, kind, public_key, private_key_enc                                                                                                                                                                                                         | ブラインド署名の鍵。秘密鍵は暗号化して保存              | ticket・room の秘密鍵は終了48時間後に削除      |
-| spent           | keyset_id, y                                                                                                                                                                                                                                                               | 使用済み・返却済みチケットの照合値 `Y = hashToCurve(x)` | 終了48時間後に削除                             |
-| quotes          | id, event_id, payment_hash, state, expires_at                                                                                                                                                                                                                              | 有料チケットの請求書                                    | 終了48時間後に削除（未払いは期限の1時間後）    |
-| invite_codes    | id, event_id, code_hash, label, max_uses, uses_left                                                                                                                                                                                                                        | 招待コード。コードは鍵付きハッシュのみ                  | イベント終了まで                               |
-| checkin_buckets | event_id, bucket_start, count                                                                                                                                                                                                                                              | 15分ごとの来場数（ダッシュボードのグラフ）              | イベントと同じ                                 |
-| announcements   | id, event_id, body, created_at                                                                                                                                                                                                                                             | お知らせ                                                | イベントと同じ                                 |
-| scanner_links   | id, event_id, token_hash, label, expires_at, revoked_at, created_at                                                                                                                                                                                                        | 受付リンク。トークンはハッシュのみ                      | 期限（終了6時間後）まで                        |
+| テーブル        | 列                                                                                                                                                                                                                                                                                       | 何のためか                                              | 保持期間                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------- |
+| hosts           | pubkey                                                                                                                                                                                                                                                                                   | 主催者の識別（NIP-98 で初めて操作したとき登録）         | 退会まで                                       |
+| events          | id, host_pubkey, title, description, starts_at, ends_at, location, location_visibility, capacity, issue_policy, price_msat, issued_count, redeemed_count, returned_count, offline_checkin, nwc_enc, room_enabled, status, cover_image, cover_mime, cover_version, created_at, updated_at | イベント情報と集計値                                    | 主催者が削除するまで（nwc_enc は終了48時間後） |
+| event_cohosts   | event_id, pubkey                                                                                                                                                                                                                                                                         | 共同主催者                                              | イベントと同じ                                 |
+| keysets         | id, event_id または host_pubkey, kind, public_key, private_key_enc                                                                                                                                                                                                                       | ブラインド署名の鍵。秘密鍵は暗号化して保存              | ticket・room の秘密鍵は終了48時間後に削除      |
+| spent           | keyset_id, y                                                                                                                                                                                                                                                                             | 使用済み・返却済みチケットの照合値 `Y = hashToCurve(x)` | 終了48時間後に削除                             |
+| quotes          | id, event_id, payment_hash, state, expires_at                                                                                                                                                                                                                                            | 有料チケットの請求書                                    | 終了48時間後に削除（未払いは期限の1時間後）    |
+| invite_codes    | id, event_id, code_hash, label, max_uses, uses_left                                                                                                                                                                                                                                      | 招待コード。コードは鍵付きハッシュのみ                  | イベント終了まで                               |
+| checkin_buckets | event_id, bucket_start, count                                                                                                                                                                                                                                                            | 15分ごとの来場数（ダッシュボードのグラフ）              | イベントと同じ                                 |
+| announcements   | id, event_id, body, created_at                                                                                                                                                                                                                                                           | お知らせ                                                | イベントと同じ                                 |
+| scanner_links   | id, event_id, token_hash, label, expires_at, revoked_at, created_at                                                                                                                                                                                                                      | 受付リンク。トークンはハッシュのみ                      | 期限（終了6時間後）まで                        |
 
 補足：
 
@@ -57,17 +57,18 @@
 
 ## リクエストごとにサーバーに届く値
 
-| 場面                                     | 届く値                                                      | 保存するもの                                                                                |
-| ---------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| イベント閲覧 `GET /events/:id`           | イベント ID                                                 | なし                                                                                        |
-| PoW 課題 `POST /events/:id/quote`        | イベント ID                                                 | なし（課題は HMAC 付きでステートレス）                                                      |
-| 請求書 `POST /events/:id/quote`（有料）  | イベント ID                                                 | quote（payment_hash、状態、期限）                                                           |
-| 支払い確認 `GET /events/:id/quotes/:qid` | quote ID                                                    | 状態の更新のみ                                                                              |
-| 発行 `POST /events/:id/issue`            | PoW の解・招待コード・quote ID のいずれか、`keysetId`、`B_` | `issued_count + 1`、招待コードの残り回数 − 1、quote を `issued` に。`B_` と署名は保存しない |
-| 返却 `POST /events/:id/return`           | `keysetId`、`secret`(=`x`)、`C`                             | `spent` に `y`、`issued_count − 1`、`returned_count + 1`                                    |
-| 消し込み `POST /events/:id/redeem`       | 受付トークン、`keysetId`、`secret`(=`x`)、`C`               | `spent` に `y`、`redeemed_count + 1`、時間帯の件数 + 1                                      |
-| 使用済みリスト `GET /events/:id/spent`   | 受付トークン                                                | なし（オフライン受付のイベントのみ。`y` の一覧を返す）                                      |
-| 主催者 API                               | NIP-98 署名またはセッション（pubkey）、入力内容             | 入力内容と pubkey                                                                           |
+| 場面                                     | 届く値                                                          | 保存するもの                                                                                |
+| ---------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| イベント閲覧 `GET /events/:id`           | イベント ID                                                     | なし                                                                                        |
+| PoW 課題 `POST /events/:id/quote`        | イベント ID                                                     | なし（課題は HMAC 付きでステートレス）                                                      |
+| 請求書 `POST /events/:id/quote`（有料）  | イベント ID                                                     | quote（payment_hash、状態、期限）                                                           |
+| 支払い確認 `GET /events/:id/quotes/:qid` | quote ID                                                        | 状態の更新のみ                                                                              |
+| 発行 `POST /events/:id/issue`            | PoW の解・招待コード・quote ID のいずれか、`keysetId`、`B_`     | `issued_count + 1`、招待コードの残り回数 − 1、quote を `issued` に。`B_` と署名は保存しない |
+| 返却 `POST /events/:id/return`           | `keysetId`、`secret`(=`x`)、`C`                                 | `spent` に `y`、`issued_count − 1`、`returned_count + 1`                                    |
+| 消し込み `POST /events/:id/redeem`       | 受付トークン、`keysetId`、`secret`(=`x`)、`C`                   | `spent` に `y`、`redeemed_count + 1`、時間帯の件数 + 1                                      |
+| 使用済みリスト `GET /events/:id/spent`   | 受付トークン                                                    | なし（オフライン受付のイベントのみ。`y` の一覧を返す）                                      |
+| 入室 `POST /events/:id/room/join`        | 入室パス（`keysetId`、`secret`、`C`）、使い捨て鍵の鍵パッケージ | `spent` に入室パスの `y`。エージェントにはイベント ID・鍵パッケージだけを渡す               |
+| 主催者 API                               | NIP-98 署名またはセッション（pubkey）、入力内容                 | 入力内容と pubkey                                                                           |
 
 発行時に見た `B_` と、消し込み・返却時に見た `x` を結びつける計算はできません（ブラインド署名）。
 

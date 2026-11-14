@@ -79,7 +79,9 @@ describe('privacy guarantees', () => {
     const h = setup();
     const host = makeHost(h);
     await createPublishedEvent(h, host);
-    const rows = h.db.$client.prepare('SELECT id, private_key_enc FROM keysets').all() as {
+    const rows = h.db.$client
+      .prepare("SELECT id, private_key_enc FROM keysets WHERE kind = 'ticket'")
+      .all() as {
       id: string;
       private_key_enc: string;
     }[];
