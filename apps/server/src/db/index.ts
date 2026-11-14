@@ -20,11 +20,22 @@ export function openDatabase(path: string): Db {
 
 export function migrate(sqlite: Database.Database): void {
   const current = sqlite.pragma('user_version', { simple: true }) as number;
-  for (let v = current; v < MIGRATIONS.length; v++) {
-    sqlite.transaction(() => {
-      sqlite.exec(MIGRATIONS[v] as string);
-      sqlite.pragma(`user_version = ${v + 1}`);
-    })();
+  if (current >= MIGRATIONS.length) return;
+  // Table rebuilds (SQLite cannot alter CHECK constraints) must not cascade deletes, so foreign
+  // keys are off while migrating and verified afterwards. The pragma is a no-op inside a
+  // transaction, hence it is set here.
+  sqlite.pragma('foreign_keys = OFF');
+  try {
+    for (let v = current; v < MIGRATIONS.length; v++) {
+      sqlite.transaction(() => {
+        sqlite.exec(MIGRATIONS[v] as string);
+        const broken = sqlite.pragma('foreign_key_check') as unknown[];
+        if (broken.length > 0) throw new Error(`migration ${v + 1} broke foreign keys`);
+        sqlite.pragma(`user_version = ${v + 1}`);
+      })();
+    }
+  } finally {
+    sqlite.pragma('foreign_keys = ON');
   }
 }
 

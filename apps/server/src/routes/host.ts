@@ -1,26 +1,28 @@
 import { generateKeyset } from '@kamen/core';
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { createMiddleware } from 'hono/factory';
 import { z } from 'zod';
-import { apiError, getOwnedEvent, toHostEvent, type AppContext } from '../context.js';
+import { apiError, getManagedEvent, toHostEvent, type AppContext } from '../context.js';
 import {
   announcements,
   checkinBuckets,
+  eventCohosts,
   events,
-  hosts,
   keysets,
   scannerLinks,
 } from '../db/schema.js';
-import { nip98Auth, type HostEnv } from '../lib/nip98.js';
 import { createHostSession } from '../lib/host-session.js';
-import { deriveKey, randomId, randomToken, sha256Hex } from '../lib/secrets.js';
+import type { HostEnv } from '../lib/nip98.js';
+import { randomId, randomToken, sha256Hex } from '../lib/secrets.js';
 import { jsonBody } from '../lib/validate.js';
+import { hostMiddleware } from './host-auth.js';
 
 export const MAX_COVER_BYTES = 512 * 1024;
 const COVER_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 const SCANNER_GRACE_MS = 6 * 60 * 60 * 1000;
+/** Lightning cannot carry less than 1 sat in practice. */
+const MIN_PRICE_MSAT = 1000;
 
 const eventFields = z.object({
   title: z.string().trim().min(1).max(120),
@@ -30,6 +32,9 @@ const eventFields = z.object({
   location: z.string().max(500),
   locationVisibility: z.enum(['public', 'ticket_holders']),
   capacity: z.number().int().min(1).max(10_000),
+  issuePolicy: z.enum(['pow', 'invite', 'paid']),
+  priceMsat: z.number().int().min(0).max(100_000_000_000),
+  offlineCheckin: z.boolean(),
 });
 
 const createSchema = eventFields
@@ -37,6 +42,9 @@ const createSchema = eventFields
     description: eventFields.shape.description.default(''),
     location: eventFields.shape.location.default(''),
     locationVisibility: eventFields.shape.locationVisibility.default('public'),
+    issuePolicy: eventFields.shape.issuePolicy.default('pow'),
+    priceMsat: eventFields.shape.priceMsat.default(0),
+    offlineCheckin: eventFields.shape.offlineCheckin.default(false),
   })
   .refine((e) => e.endsAt > e.startsAt, 'endsAt must be after startsAt');
 
@@ -55,40 +63,39 @@ const scannerLinkSchema = z.object({
 
 export function hostRoutes(ctx: AppContext) {
   const app = new Hono<HostEnv>();
-  const sessionKey = deriveKey(ctx.config.masterKey, 'host-session');
-  const strictAuth = nip98Auth({ publicOrigin: ctx.config.publicOrigin, now: ctx.now });
-  const auth = nip98Auth({ publicOrigin: ctx.config.publicOrigin, now: ctx.now, sessionKey });
-  const limit = bodyLimit({ maxSize: 64 * 1024, onError: () => apiError(413, 'body_too_large') });
-
-  // Every endpoint below is NIP-98 protected; host registration is implicit on first use.
-  // (Applied per route: these paths share a prefix with public routes.)
-  const register = createMiddleware<HostEnv>(async (c, next) => {
-    ctx.db
-      .insert(hosts)
-      .values({ pubkey: c.get('hostPubkey') })
-      .onConflictDoNothing()
-      .run();
-    await next();
-  });
-  const host = [limit, auth, register] as const;
+  const { sessionKey, strictAuth, auth, limit, register, host } = hostMiddleware(ctx);
 
   /** Exchange one NIP-98 signature for a short-lived session token (see lib/host-session.ts). */
   app.post('/host/session', limit, strictAuth, register, (c) => {
     return c.json(createHostSession(sessionKey, c.get('hostPubkey'), ctx.now()));
   });
 
+  /** Events the caller owns or co-hosts. */
   app.get('/host/events', ...host, (c) => {
+    const me = c.get('hostPubkey');
+    const cohosted = ctx.db
+      .select({ id: eventCohosts.eventId })
+      .from(eventCohosts)
+      .where(eq(eventCohosts.pubkey, me))
+      .all()
+      .map((r) => r.id);
     const rows = ctx.db
       .select()
       .from(events)
-      .where(eq(events.hostPubkey, c.get('hostPubkey')))
+      .where(
+        cohosted.length > 0
+          ? or(eq(events.hostPubkey, me), inArray(events.id, cohosted))
+          : eq(events.hostPubkey, me),
+      )
       .orderBy(desc(events.startsAt))
       .all();
-    return c.json(rows.map((r) => toHostEvent(ctx, r)));
+    return c.json(rows.map((r) => toHostEvent(ctx, r, r.hostPubkey === me ? 'owner' : 'cohost')));
   });
 
   app.post('/events', ...host, async (c) => {
     const input = await jsonBody(c, createSchema);
+    if (input.issuePolicy === 'paid' && input.priceMsat < MIN_PRICE_MSAT)
+      apiError(400, 'price_required');
     const now = ctx.now();
     const id = randomId();
     const ticket = generateKeyset('ticket');
@@ -98,10 +105,10 @@ export function hostRoutes(ctx: AppContext) {
           id,
           hostPubkey: c.get('hostPubkey'),
           ...input,
-          issuePolicy: 'pow',
-          priceMsat: 0,
+          priceMsat: input.issuePolicy === 'paid' ? input.priceMsat : 0,
           issuedCount: 0,
           redeemedCount: 0,
+          returnedCount: 0,
           status: 'draft',
           coverVersion: 0,
           createdAt: now,
@@ -118,22 +125,29 @@ export function hostRoutes(ctx: AppContext) {
         })
         .run();
     });
-    return c.json(toHostEvent(ctx, getOwnedEvent(ctx, id, c.get('hostPubkey'))), 201);
+    const row = getManagedEvent(ctx, id, c.get('hostPubkey'));
+    return c.json(toHostEvent(ctx, row, row.role), 201);
   });
 
   app.get('/host/events/:id', ...host, (c) => {
-    return c.json(toHostEvent(ctx, getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'))));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    return c.json(toHostEvent(ctx, row, row.role));
   });
 
   app.patch('/events/:id', ...host, async (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     const input = await jsonBody(c, patchSchema);
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'), {
+      ownerOnly: input.status === 'cancelled',
+    });
     const startsAt = input.startsAt ?? row.startsAt;
     const endsAt = input.endsAt ?? row.endsAt;
     if (endsAt <= startsAt) apiError(400, 'invalid_time_range');
     if (input.capacity !== undefined && input.capacity < row.issuedCount) {
       apiError(409, 'capacity_below_issued');
     }
+    const policy = input.issuePolicy ?? row.issuePolicy;
+    const price = input.priceMsat ?? row.priceMsat;
+    if (policy === 'paid' && price < MIN_PRICE_MSAT) apiError(400, 'price_required');
     if (row.status === 'cancelled' && input.status && input.status !== 'cancelled') {
       apiError(409, 'event_cancelled');
     }
@@ -146,7 +160,8 @@ export function hostRoutes(ctx: AppContext) {
       .set({ ...patch, updatedAt: ctx.now() })
       .where(eq(events.id, row.id))
       .run();
-    return c.json(toHostEvent(ctx, getOwnedEvent(ctx, row.id, c.get('hostPubkey'))));
+    const updated = getManagedEvent(ctx, row.id, c.get('hostPubkey'));
+    return c.json(toHostEvent(ctx, updated, updated.role));
   });
 
   app.put(
@@ -155,7 +170,7 @@ export function hostRoutes(ctx: AppContext) {
     auth,
     register,
     async (c) => {
-      const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+      const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
       const mime = (c.req.header('content-type') ?? '').split(';')[0]?.trim() ?? '';
       if (!(COVER_TYPES as readonly string[]).includes(mime))
         apiError(422, 'unsupported_image_type');
@@ -176,7 +191,7 @@ export function hostRoutes(ctx: AppContext) {
   );
 
   app.delete('/events/:id/cover', ...host, (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     ctx.db
       .update(events)
       .set({ coverImage: null, coverMime: null, updatedAt: ctx.now() })
@@ -186,7 +201,7 @@ export function hostRoutes(ctx: AppContext) {
   });
 
   app.post('/events/:id/announcements', ...host, async (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     const { body } = await jsonBody(c, announcementSchema);
     const item = { id: randomId(16), eventId: row.id, body, createdAt: ctx.now() };
     ctx.db.insert(announcements).values(item).run();
@@ -195,7 +210,7 @@ export function hostRoutes(ctx: AppContext) {
   });
 
   app.delete('/events/:id/announcements/:aid', ...host, (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     const res = ctx.db
       .delete(announcements)
       .where(and(eq(announcements.id, c.req.param('aid')), eq(announcements.eventId, row.id)))
@@ -205,7 +220,7 @@ export function hostRoutes(ctx: AppContext) {
   });
 
   app.get('/events/:id/scanner-links', ...host, (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     const links = ctx.db
       .select({
         id: scannerLinks.id,
@@ -226,7 +241,7 @@ export function hostRoutes(ctx: AppContext) {
    * web app puts it in the URL fragment so it never reaches server or proxy logs.
    */
   app.post('/events/:id/scanner-links', ...host, async (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     const input = await jsonBody(c, scannerLinkSchema);
     const now = ctx.now();
     const expiresAt = Math.min(input.expiresAt ?? Infinity, row.endsAt + SCANNER_GRACE_MS);
@@ -248,7 +263,7 @@ export function hostRoutes(ctx: AppContext) {
   });
 
   app.delete('/events/:id/scanner-links/:lid', ...host, (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     const res = ctx.db
       .update(scannerLinks)
       .set({ revokedAt: ctx.now() })
@@ -265,7 +280,7 @@ export function hostRoutes(ctx: AppContext) {
   });
 
   app.get('/events/:id/stats', ...host, (c) => {
-    const row = getOwnedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
+    const row = getManagedEvent(ctx, c.req.param('id'), c.get('hostPubkey'));
     const buckets = ctx.db
       .select({ start: checkinBuckets.bucketStart, count: checkinBuckets.count })
       .from(checkinBuckets)
@@ -276,6 +291,7 @@ export function hostRoutes(ctx: AppContext) {
       capacity: row.capacity,
       issued: row.issuedCount,
       redeemed: row.redeemedCount,
+      returned: row.returnedCount,
       checkinsPer15Min: buckets,
     });
   });

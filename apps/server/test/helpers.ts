@@ -15,11 +15,12 @@ import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { createContext, type AppContext } from '../src/context.js';
 import { openDatabase } from '../src/db/index.js';
+import { MockWalletBackend } from '../src/lib/wallet.js';
 
 export const ORIGIN = 'http://kamen.test';
 export const HOUR = 3600_000;
 
-export function setup(opts: { now?: () => number } = {}) {
+export function setup() {
   const config = loadConfig({
     KAMEN_MASTER_KEY: '11'.repeat(32),
     POW_DIFFICULTY: '4',
@@ -27,14 +28,18 @@ export function setup(opts: { now?: () => number } = {}) {
   });
   const db = openDatabase(':memory:');
   const clock = { t: Date.now() };
-  const ctx: AppContext = createContext(db, config, opts.now ?? (() => clock.t));
+  const wallet = new MockWalletBackend(null, () => clock.t);
+  const ctx: AppContext = createContext(db, config, {
+    now: () => clock.t,
+    walletFactory: wallet.factory,
+  });
   const logs: string[] = [];
   const app = createApp(ctx, { log: (l) => logs.push(l) });
 
   const request = (path: string, init: RequestInit = {}) =>
     app.request(ORIGIN + path, { ...init, headers: { host: 'kamen.test', ...init.headers } });
 
-  return { app, ctx, db, logs, clock, request };
+  return { app, ctx, db, logs, clock, request, wallet };
 }
 
 export type Harness = ReturnType<typeof setup>;

@@ -44,9 +44,12 @@ describe('privacy guarantees', () => {
       [
         'announcements',
         'checkin_buckets',
+        'event_cohosts',
         'events',
         'hosts',
+        'invite_codes',
         'keysets',
+        'quotes',
         'scanner_links',
         'spent',
       ].sort(),

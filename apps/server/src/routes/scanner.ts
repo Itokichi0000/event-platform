@@ -1,23 +1,16 @@
-import { isKeysetId, isSecret, spentKey, verifyProofWithKeyset } from '@kamen/core';
+import { spentKey, verifyProofWithKeyset } from '@kamen/core';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
-import { z } from 'zod';
 import { apiError, getEvent, loadKeyset, type AppContext } from '../context.js';
-import { scannerLinks } from '../db/schema.js';
+import { keysets, scannerLinks, spent } from '../db/schema.js';
 import { sha256Hex } from '../lib/secrets.js';
 import { jsonBody } from '../lib/validate.js';
+import { proofSchema } from './public.js';
 
 export const BUCKET_MS = 15 * 60 * 1000;
 
-/** Exactly what `toRedeemPayload()` produces: no DLEQ, no blinding factor. */
-const redeemSchema = z
-  .object({
-    keysetId: z.string().refine(isKeysetId),
-    secret: z.string().refine(isSecret),
-    C: z.string().regex(/^0[23][0-9a-f]{64}$/),
-  })
-  .strict();
+const redeemSchema = proofSchema;
 
 type ScannerEnv = { Variables: { scannerExpiresAt: number } };
 
@@ -53,7 +46,28 @@ export function scannerRoutes(ctx: AppContext) {
       expiresAt: c.get('scannerExpiresAt'),
       issued: row.issuedCount,
       redeemed: row.redeemedCount,
+      offlineCheckin: row.offlineCheckin,
+      status: row.status,
     });
+  });
+
+  /**
+   * Spent identifiers (Y = hashToCurve(secret)) of the event's tickets, so a scanner going
+   * offline already knows tickets used at other devices. Only for offline check-in events.
+   * The list contains no times and no order (it is sorted by Y).
+   */
+  app.get('/events/:id/spent', scannerAuth, (c) => {
+    const row = getEvent(ctx, c.req.param('id'));
+    if (!row.offlineCheckin) apiError(403, 'offline_checkin_disabled');
+    const ys = ctx.db
+      .select({ y: spent.y })
+      .from(spent)
+      .innerJoin(keysets, eq(keysets.id, spent.keysetId))
+      .where(and(eq(keysets.eventId, row.id), eq(keysets.kind, 'ticket')))
+      .orderBy(spent.y)
+      .all()
+      .map((r) => r.y);
+    return c.json({ ys });
   });
 
   /**

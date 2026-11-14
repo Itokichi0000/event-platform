@@ -3,14 +3,28 @@ import {
   createPowChallenge,
   isAuthenticChallenge,
   isKeysetId,
+  isSecret,
   pointFromHex,
   signIssueRequest,
+  spentKey,
+  verifyProofWithKeyset,
   type IssueResponse,
   type KeysetKind,
 } from '@kamen/core';
+import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { apiError, getEvent, loadKeyset, toPublicEvent, type AppContext } from '../context.js';
+import {
+  apiError,
+  getEvent,
+  loadKeyset,
+  remainingSeats,
+  toPublicEvent,
+  type AppContext,
+} from '../context.js';
+import { quotes, type EventRow } from '../db/schema.js';
+import { inviteCodeHash } from '../lib/invite.js';
+import { randomToken } from '../lib/secrets.js';
 import { jsonBody } from '../lib/validate.js';
 
 const hex = (bytes: number) => z.string().regex(new RegExp(`^[0-9a-f]{${bytes * 2}}$`));
@@ -29,13 +43,33 @@ const powSchema = z.object({
 const blindedOutput = z.object({ keysetId: z.string().refine(isKeysetId), B_: hex(33) });
 
 const issueSchema = z.object({
-  pow: powSchema,
+  /** Free (`pow`) and invite-only (`invite`) events. */
+  pow: powSchema.optional(),
+  /** Invite-only events. */
+  invite: z.string().min(1).max(64).optional(),
+  /** Paid events: a paid quote id. */
+  quoteId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{20,64}$/)
+    .optional(),
   // Keyed by kind so the room pass can be issued alongside the ticket in phase 3.
   outputs: z.object({ ticket: blindedOutput }).strict(),
 });
 
+/** Exactly what `toRedeemPayload()` produces: no DLEQ, no blinding factor. */
+export const proofSchema = z
+  .object({
+    keysetId: z.string().refine(isKeysetId),
+    secret: z.string().refine(isSecret),
+    C: z.string().regex(/^0[23][0-9a-f]{64}$/),
+  })
+  .strict();
+
 /** Kinds that may be issued at the moment. 'room' is added in phase 3. */
 const ISSUABLE_KINDS: readonly KeysetKind[] = ['ticket'];
+
+/** Expired quotes are still looked up for a while in case the payment landed at the deadline. */
+const LATE_PAYMENT_GRACE_MS = 60 * 60 * 1000;
 
 export function publicRoutes(ctx: AppContext) {
   const app = new Hono();
@@ -54,36 +88,74 @@ export function publicRoutes(ctx: AppContext) {
     });
   });
 
-  /** Free events: hand out a proof-of-work challenge. (Paid events: invoice, phase 2.) */
-  app.post('/events/:id/quote', (c) => {
+  /**
+   * Free / invite-only events: a proof-of-work challenge.
+   * Paid events: a Lightning invoice created in the host's wallet. The quote id returned is the
+   * participant's claim to one ticket once paid; nothing about the payer is recorded.
+   */
+  app.post('/events/:id/quote', async (c) => {
     const row = getEvent(ctx, c.req.param('id'));
     assertIssuable(ctx, row);
-    const challenge = createPowChallenge(
-      ctx.powKey,
-      row.id,
-      ctx.config.powDifficulty,
-      ctx.config.powTtlSeconds,
-      Math.floor(ctx.now() / 1000),
-    );
-    return c.json({ kind: 'pow', challenge });
+
+    if (row.issuePolicy !== 'paid') {
+      const challenge = createPowChallenge(
+        ctx.powKey,
+        row.id,
+        ctx.config.powDifficulty,
+        ctx.config.powTtlSeconds,
+        Math.floor(ctx.now() / 1000),
+      );
+      return c.json({ kind: 'pow', challenge });
+    }
+
+    if (!row.nwcEnc) apiError(409, 'payments_not_configured');
+    if (remainingSeats(ctx, row) <= 0) apiError(409, 'sold_out');
+    const uri = ctx.vault.decrypt(row.nwcEnc, `nwc:${row.id}`);
+    let invoice;
+    try {
+      invoice = await ctx.payments
+        .wallet(row.id, uri)
+        .makeInvoice(row.priceMsat, `${row.title} (Kamen)`, ctx.config.invoiceTtlSeconds);
+    } catch {
+      apiError(502, 'wallet_unavailable');
+    }
+    const id = randomToken();
+    ctx.db
+      .insert(quotes)
+      .values({
+        id,
+        eventId: row.id,
+        paymentHash: invoice.paymentHash,
+        state: 'unpaid',
+        expiresAt: invoice.expiresAt,
+      })
+      .run();
+    void ctx.payments.watch(row.id, uri);
+    return c.json({
+      kind: 'invoice',
+      quoteId: id,
+      invoice: invoice.invoice,
+      amountMsat: row.priceMsat,
+      expiresAt: invoice.expiresAt,
+    });
+  });
+
+  /** Payment status of a quote. Asks the host's wallet (lookup_invoice) while unpaid. */
+  app.get('/events/:id/quotes/:qid', async (c) => {
+    const row = getEvent(ctx, c.req.param('id'));
+    const quote = await refreshQuote(ctx, row, c.req.param('qid'));
+    return c.json({ state: quote.state, expiresAt: quote.expiresAt });
   });
 
   /**
-   * Sign the participant's blinded messages. Nothing about the request is stored:
-   * the only persistent effect is issued_count + 1 (and the PoW id, in memory, until expiry).
+   * Sign the participant's blinded messages. Nothing about the request is stored: the persistent
+   * effects are issued_count + 1 and, depending on the policy, one invite use or the quote moving
+   * to `issued`. No column links a quote or code to the blinded message.
    */
   app.post('/events/:id/issue', async (c) => {
     const body = await jsonBody(c, issueSchema);
     const row = getEvent(ctx, c.req.param('id'));
     assertIssuable(ctx, row);
-
-    const { challenge, nonce } = body.pow;
-    const nowMs = ctx.now();
-    if (!isAuthenticChallenge(ctx.powKey, challenge) || challenge.eventId !== row.id) {
-      apiError(422, 'invalid_pow');
-    }
-    if (challenge.expiresAt * 1000 <= nowMs) apiError(422, 'pow_expired');
-    if (!checkPowWork(challenge, nonce)) apiError(422, 'invalid_pow');
 
     const requested = Object.keys(body.outputs) as KeysetKind[];
     for (const kind of requested)
@@ -99,19 +171,64 @@ export function publicRoutes(ctx: AppContext) {
       }
     }
 
-    if (!ctx.usedPow.add(challenge.id, challenge.expiresAt * 1000, nowMs)) {
-      apiError(409, 'pow_already_used');
+    let inviteHash: string | null = null;
+    if (row.issuePolicy === 'paid') {
+      if (!body.quoteId) apiError(422, 'quote_required');
+      const quote = await refreshQuote(ctx, row, body.quoteId);
+      if (quote.state === 'issued') apiError(409, 'quote_already_used');
+      if (quote.state !== 'paid') apiError(402, 'quote_not_paid');
+    } else {
+      if (!body.pow) apiError(422, 'pow_required');
+      if (row.issuePolicy === 'invite') {
+        if (!body.invite) apiError(422, 'invite_required');
+        inviteHash = inviteCodeHash(ctx.inviteKey, row.id, body.invite);
+      }
+      const { challenge, nonce } = body.pow;
+      const nowMs = ctx.now();
+      if (!isAuthenticChallenge(ctx.powKey, challenge) || challenge.eventId !== row.id) {
+        apiError(422, 'invalid_pow');
+      }
+      if (challenge.expiresAt * 1000 <= nowMs) apiError(422, 'pow_expired');
+      if (!checkPowWork(challenge, nonce)) apiError(422, 'invalid_pow');
+      if (!ctx.usedPow.add(challenge.id, challenge.expiresAt * 1000, nowMs)) {
+        apiError(409, 'pow_already_used');
+      }
     }
 
     const sqlite = ctx.db.$client;
     const signatures = sqlite.transaction(() => {
-      const taken = sqlite
-        .prepare(
-          `UPDATE events SET issued_count = issued_count + 1
-           WHERE id = ? AND status = 'published' AND issued_count < capacity`,
-        )
-        .run(row.id);
-      if (taken.changes !== 1) apiError(409, 'sold_out');
+      if (row.issuePolicy === 'paid') {
+        const used = sqlite
+          .prepare(
+            `UPDATE quotes SET state = 'issued' WHERE id = ? AND event_id = ? AND state = 'paid'`,
+          )
+          .run(body.quoteId, row.id);
+        if (used.changes !== 1) apiError(409, 'quote_already_used');
+        // The seat was held since payment, so no capacity check here.
+        const taken = sqlite
+          .prepare(
+            `UPDATE events SET issued_count = issued_count + 1 WHERE id = ? AND status = 'published'`,
+          )
+          .run(row.id);
+        if (taken.changes !== 1) apiError(409, 'event_not_published');
+      } else {
+        if (inviteHash) {
+          const used = sqlite
+            .prepare(
+              `UPDATE invite_codes SET uses_left = uses_left - 1
+               WHERE event_id = ? AND code_hash = ? AND uses_left > 0`,
+            )
+            .run(row.id, inviteHash);
+          if (used.changes !== 1) apiError(403, 'invalid_invite');
+        }
+        const taken = sqlite
+          .prepare(
+            `UPDATE events SET issued_count = issued_count + 1
+             WHERE id = ? AND status = 'published' AND issued_count < capacity`,
+          )
+          .run(row.id);
+        if (taken.changes !== 1) apiError(409, 'sold_out');
+      }
       const out: Partial<Record<KeysetKind, IssueResponse>> = {};
       for (const { kind, keyset } of keysets) {
         out[kind] = signIssueRequest(body.outputs[kind as 'ticket'], keyset);
@@ -127,11 +244,75 @@ export function publicRoutes(ctx: AppContext) {
     });
   });
 
+  /**
+   * Give a ticket back before the event: it becomes spent and the seat is released.
+   * Returned and redeemed tickets look the same in `spent`. No refund: the server holds no funds.
+   */
+  app.post('/events/:id/return', async (c) => {
+    const proof = await jsonBody(c, proofSchema);
+    const row = getEvent(ctx, c.req.param('id'));
+    if (row.status !== 'published') apiError(409, 'event_not_published');
+    if (row.endsAt <= ctx.now()) apiError(410, 'event_ended');
+    const keyset = loadKeyset(ctx, row.id, 'ticket');
+    if (proof.keysetId !== keyset.id || !verifyProofWithKeyset(proof, keyset)) {
+      apiError(422, 'invalid_ticket');
+    }
+    const sqlite = ctx.db.$client;
+    sqlite.transaction(() => {
+      const ins = sqlite
+        .prepare('INSERT INTO spent (keyset_id, y) VALUES (?, ?) ON CONFLICT DO NOTHING')
+        .run(keyset.id, spentKey(proof.secret));
+      if (ins.changes === 0) apiError(409, 'already_redeemed');
+      sqlite
+        .prepare(
+          `UPDATE events SET issued_count = issued_count - 1, returned_count = returned_count + 1
+           WHERE id = ?`,
+        )
+        .run(row.id);
+    })();
+    return c.json({ ok: true });
+  });
+
   return app;
 }
 
-function assertIssuable(ctx: AppContext, row: { status: string; endsAt: number }): void {
+function assertIssuable(ctx: AppContext, row: EventRow): void {
   if (row.status === 'cancelled') apiError(410, 'event_cancelled');
   if (row.status !== 'published') apiError(403, 'event_not_published');
   if (row.endsAt <= ctx.now()) apiError(410, 'event_ended');
+}
+
+/** Load a quote and, while it is unpaid, ask the host's wallet whether it was paid. */
+async function refreshQuote(ctx: AppContext, row: EventRow, quoteId: string) {
+  const quote = ctx.db
+    .select()
+    .from(quotes)
+    .where(and(eq(quotes.id, quoteId), eq(quotes.eventId, row.id)))
+    .get();
+  if (!quote) apiError(404, 'quote_not_found');
+  const now = ctx.now();
+  const checkable =
+    (quote.state === 'unpaid' || quote.state === 'expired') &&
+    now < quote.expiresAt + LATE_PAYMENT_GRACE_MS &&
+    row.nwcEnc !== null;
+  if (!checkable) return quote;
+
+  let state = quote.state;
+  try {
+    const uri = ctx.vault.decrypt(row.nwcEnc as string, `nwc:${row.id}`);
+    const res = await ctx.payments.wallet(row.id, uri).lookupInvoice(quote.paymentHash);
+    if (res === 'settled') state = 'paid';
+    else if (now >= quote.expiresAt || res === 'expired' || res === 'failed') state = 'expired';
+  } catch {
+    // Wallet unreachable: report the stored state; the participant can retry.
+    if (now >= quote.expiresAt && state === 'unpaid') state = 'expired';
+  }
+  if (state !== quote.state) {
+    ctx.db
+      .update(quotes)
+      .set({ state })
+      .where(and(eq(quotes.id, quote.id), eq(quotes.state, quote.state)))
+      .run();
+  }
+  return { ...quote, state };
 }

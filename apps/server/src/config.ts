@@ -19,6 +19,12 @@ const schema = z.object({
    * When unset, the request's Host header is used.
    */
   PUBLIC_ORIGIN: z.url().optional(),
+  /** Lifetime of a Lightning invoice for a paid ticket. */
+  INVOICE_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+  /** Development / E2E only: use an in-memory wallet instead of NWC. Refused in production. */
+  KAMEN_MOCK_WALLET: z.enum(['0', '1']).default('0'),
+  KAMEN_MOCK_WALLET_SETTLE_MS: z.coerce.number().int().min(0).default(1500),
+  NODE_ENV: z.string().optional(),
 });
 
 export interface Config {
@@ -29,6 +35,9 @@ export interface Config {
   powDifficulty: number;
   powTtlSeconds: number;
   publicOrigin: string | undefined;
+  invoiceTtlSeconds: number;
+  /** null = use real NWC wallets. */
+  mockWalletSettleMs: number | null;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -40,6 +49,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new Error(`invalid configuration:\n${msg}`);
   }
   const e = parsed.data;
+  if (e.KAMEN_MOCK_WALLET === '1' && e.NODE_ENV === 'production') {
+    throw new Error('invalid configuration:\nKAMEN_MOCK_WALLET must not be used in production');
+  }
   return {
     port: e.PORT,
     host: e.HOST,
@@ -48,5 +60,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     powDifficulty: e.POW_DIFFICULTY,
     powTtlSeconds: e.POW_TTL_SECONDS,
     publicOrigin: e.PUBLIC_ORIGIN ? new URL(e.PUBLIC_ORIGIN).origin : undefined,
+    invoiceTtlSeconds: e.INVOICE_TTL_SECONDS,
+    mockWalletSettleMs: e.KAMEN_MOCK_WALLET === '1' ? e.KAMEN_MOCK_WALLET_SETTLE_MS : null,
   };
 }

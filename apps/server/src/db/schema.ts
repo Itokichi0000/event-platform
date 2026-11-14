@@ -15,10 +15,13 @@ export const events = sqliteTable('events', {
   location: text('location').notNull(),
   locationVisibility: text('location_visibility', { enum: ['public', 'ticket_holders'] }).notNull(),
   capacity: integer('capacity').notNull(),
-  issuePolicy: text('issue_policy', { enum: ['pow'] }).notNull(),
+  issuePolicy: text('issue_policy', { enum: ['pow', 'invite', 'paid'] }).notNull(),
   priceMsat: integer('price_msat').notNull(),
   issuedCount: integer('issued_count').notNull(),
   redeemedCount: integer('redeemed_count').notNull(),
+  returnedCount: integer('returned_count').notNull(),
+  offlineCheckin: integer('offline_checkin', { mode: 'boolean' }).notNull(),
+  nwcEnc: text('nwc_enc'),
   status: text('status', { enum: ['draft', 'published', 'cancelled'] }).notNull(),
   coverImage: blob('cover_image', { mode: 'buffer' }),
   coverMime: text('cover_mime'),
@@ -70,6 +73,32 @@ export const scannerLinks = sqliteTable('scanner_links', {
   expiresAt: integer('expires_at').notNull(),
   revokedAt: integer('revoked_at'),
   createdAt: integer('created_at').notNull(),
+});
+
+export const eventCohosts = sqliteTable(
+  'event_cohosts',
+  {
+    eventId: text('event_id').notNull(),
+    pubkey: text('pubkey').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.eventId, t.pubkey] })],
+);
+
+export const quotes = sqliteTable('quotes', {
+  id: text('id').primaryKey(),
+  eventId: text('event_id').notNull(),
+  paymentHash: text('payment_hash').notNull(),
+  state: text('state', { enum: ['unpaid', 'paid', 'issued', 'expired'] }).notNull(),
+  expiresAt: integer('expires_at').notNull(),
+});
+
+export const inviteCodes = sqliteTable('invite_codes', {
+  id: text('id').primaryKey(),
+  eventId: text('event_id').notNull(),
+  codeHash: text('code_hash').notNull(),
+  label: text('label').notNull(),
+  maxUses: integer('max_uses').notNull(),
+  usesLeft: integer('uses_left').notNull(),
 });
 
 export type EventRow = typeof events.$inferSelect;

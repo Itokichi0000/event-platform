@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppContext } from './context.js';
 import { privacyLogger } from './lib/logger.js';
+import { hostAdminRoutes } from './routes/host-admin.js';
 import { hostRoutes } from './routes/host.js';
 import { publicRoutes } from './routes/public.js';
 import { scannerRoutes } from './routes/scanner.js';
@@ -25,6 +26,7 @@ export function createApp(ctx: AppContext, opts: AppOptions = {}) {
   app.get('/api/health', (c) => c.json({ ok: true }));
   app.route('/api', scannerRoutes(ctx));
   app.route('/api', hostRoutes(ctx));
+  app.route('/api', hostAdminRoutes(ctx));
   app.route('/api', publicRoutes(ctx));
 
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
