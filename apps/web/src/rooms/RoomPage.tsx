@@ -1,5 +1,5 @@
 import type { MessagingAdapter, RoomMessage } from '@kamen/messaging';
-import { LogOut, Megaphone, Send, ShieldAlert, VenetianMask } from 'lucide-react';
+import { ArrowLeft, LogOut, Megaphone, Send, ShieldAlert, VenetianMask } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { Layout, PageMessage, Spinner } from '@/components/Layout';
@@ -203,7 +203,18 @@ function Chat({ record, onEnded }: { record: RoomRecord; onEnded: (e: Ended) => 
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <div className="min-w-0">
+        <Button
+          asChild
+          variant="ghost"
+          size="icon"
+          className="-ml-2 size-9 shrink-0"
+          aria-label={t.app.back}
+        >
+          <Link to="/tickets">
+            <ArrowLeft />
+          </Link>
+        </Button>
+        <div className="min-w-0 flex-1">
           <p className="truncate font-semibold">{record.eventTitle}</p>
           <p
             className="flex items-center gap-1.5 text-xs text-muted-foreground"

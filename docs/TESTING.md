@@ -72,3 +72,28 @@ cd apps/server && KAMEN_MASTER_KEY=$(openssl rand -hex 32) KAMEN_MOCK_WALLET=1 K
 8. 1台ずつ機内モードを解除する → 先に戻った端末は「未同期」が消え、後から戻った端末には「競合」の一覧が出る。
 9. 機内モードのまま、オフライン受付を使わないイベントの受付リンクで読む →
    「このイベントはオフライン受付に対応していません」と出る。
+
+## ルーム（Marmot）の手動確認
+
+1. テスト用リレーを起動する（または `docker compose --profile devrelay up -d` で ws://localhost:7777）。
+
+   ```bash
+   pnpm --filter @kamen/messaging relay
+   ```
+
+2. 同じ `KAMEN_MASTER_KEY` と `ROOM_RELAYS=ws://127.0.0.1:7777` で、ルームエージェントと API サーバーを起動する。
+
+   ```bash
+   cd apps/server && KAMEN_MASTER_KEY=... ROOM_RELAYS=ws://127.0.0.1:7777 pnpm agent
+   ```
+
+   ```bash
+   cd apps/server && KAMEN_MASTER_KEY=... ROOM_RELAYS=ws://127.0.0.1:7777 pnpm dev
+   ```
+
+3. Web を `KAMEN_CSP_CONNECT=ws://127.0.0.1:7777` 付きの `vite preview`（または `pnpm --filter @kamen/web dev`）で開く。
+4. 主催者としてイベントを作り公開する（「ルームを使う」が既定でオン）。
+5. スマホ3台（または別ブラウザ3つ）でチケットを取り、チケット画面の「ルームに入る」から入室する。仮面と名前が3人とも違うこと、プライバシーの注意（エージェントは読める、リレーに IP が見える）が表示されることを確認する。
+6. 会話が全員に届くこと、主催者のお知らせがルームで強調表示されることを確認する。
+7. 主催者の管理画面で「ルームを今すぐ解散」→ 全員に「このルームは解散しました」と出て、ルームの履歴が消えることを確認する。
+8. エージェントを止めた状態で、チケット取得と入場が普段どおりできること、「ルームに入る」が失敗しても入室パスが残っていることを確認する。
