@@ -176,10 +176,16 @@ export function publicRoutes(ctx: AppContext) {
     // so that getting a ticket never depends on the room.
     const withRoom = body.outputs.room !== undefined && roomAvailable(ctx, row);
     if (withRoom) ensureRoomKeyset(ctx, row.id);
-    const requested: ('ticket' | 'room')[] = withRoom ? ['ticket', 'room'] : ['ticket'];
-    const keysets = requested.map((kind) => ({ kind, keyset: loadKeyset(ctx, row.id, kind) }));
-    for (const { kind, keyset } of keysets) {
-      const out = body.outputs[kind]!;
+    const outputs: { kind: 'ticket' | 'room'; out: typeof body.outputs.ticket }[] = [
+      { kind: 'ticket', out: body.outputs.ticket },
+    ];
+    if (withRoom && body.outputs.room) outputs.push({ kind: 'room', out: body.outputs.room });
+    const keysets = outputs.map(({ kind, out }) => ({
+      kind,
+      out,
+      keyset: loadKeyset(ctx, row.id, kind),
+    }));
+    for (const { out, keyset } of keysets) {
       if (out.keysetId !== keyset.id) apiError(422, 'keyset_mismatch');
       try {
         pointFromHex(out.B_);
@@ -247,8 +253,8 @@ export function publicRoutes(ctx: AppContext) {
         if (taken.changes !== 1) apiError(409, 'sold_out');
       }
       const out: Partial<Record<KeysetKind, IssueResponse>> = {};
-      for (const { kind, keyset } of keysets) {
-        out[kind] = signIssueRequest(body.outputs[kind]!, keyset);
+      for (const { kind, out: req, keyset } of keysets) {
+        out[kind] = signIssueRequest(req, keyset);
       }
       return out;
     })();
