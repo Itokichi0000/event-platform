@@ -13,6 +13,8 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${WEB_PORT}`,
     trace: 'off',
+    // The UI language follows the browser; the specs assert Japanese copy.
+    locale: 'ja-JP',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
@@ -26,6 +28,9 @@ export default defineConfig({
         // Test-only key. Never use a fixed key in production.
         KAMEN_MASTER_KEY: 'e2e0'.repeat(16),
         POW_DIFFICULTY: '8',
+        // In-memory wallet: invoices settle 1.5 s after creation. Never in production.
+        KAMEN_MOCK_WALLET: '1',
+        KAMEN_MOCK_WALLET_SETTLE_MS: '1500',
       },
     },
     {

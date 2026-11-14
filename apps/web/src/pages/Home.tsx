@@ -13,9 +13,9 @@ export function Home() {
           {t.app.tagline}
         </p>
         <h1 className="text-4xl font-bold tracking-tight text-balance sm:text-5xl">
-          仮面をつけて、
+          {t.home.hero[0]}
           <br />
-          会いに行こう。
+          {t.home.hero[1]}
         </h1>
         <p className="mx-auto mt-4 max-w-md text-muted-foreground">{t.home.lead}</p>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">

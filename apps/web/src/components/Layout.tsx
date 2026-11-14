@@ -1,7 +1,7 @@
-import { Ticket, VenetianMask } from 'lucide-react';
+import { Languages, Ticket, VenetianMask } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { t } from '@/i18n';
+import { lang, setLang, t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
 export function Layout({
@@ -26,13 +26,24 @@ export function Layout({
             <VenetianMask className="size-5 text-primary" aria-hidden />
             {t.app.name}
           </Link>
-          <Link
-            to="/tickets"
-            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Ticket className="size-4" aria-hidden />
-            {t.app.myTickets}
-          </Link>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setLang(lang === 'ja' ? 'en' : 'ja')}
+              className="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              data-testid="lang-switch"
+            >
+              <Languages className="size-4" aria-hidden />
+              {t.app.language}
+            </button>
+            <Link
+              to="/tickets"
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Ticket className="size-4" aria-hidden />
+              {t.app.myTickets}
+            </Link>
+          </div>
         </div>
       </header>
       <main className={cn('mx-auto px-4 py-6', wide ? 'max-w-5xl' : 'max-w-2xl', className)}>

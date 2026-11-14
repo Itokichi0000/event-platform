@@ -1,5 +1,6 @@
 import { VenetianMask } from 'lucide-react';
 import { api } from '@/lib/api';
+import { monthShort } from '@/lib/format';
 import { gradientFor } from '@/lib/image';
 import { cn } from '@/lib/utils';
 
@@ -40,7 +41,7 @@ export function DateBadge({ ms }: { ms: number }) {
   return (
     <div className="flex w-12 shrink-0 flex-col overflow-hidden rounded-lg border text-center">
       <span className="bg-muted py-0.5 text-[10px] font-medium text-muted-foreground">
-        {d.getMonth() + 1}月
+        {monthShort(ms)}
       </span>
       <span className="py-1 text-lg font-semibold leading-none">{d.getDate()}</span>
     </div>

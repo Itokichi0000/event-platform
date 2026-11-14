@@ -16,6 +16,7 @@ import { EventCover } from '@/components/EventCover';
 import { Layout, PageMessage, Spinner } from '@/components/Layout';
 import { QrCode } from '@/components/QrCode';
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input, Textarea } from '@/components/ui/input';
@@ -24,6 +25,7 @@ import type { Announcement, HostEvent, ScannerLink, Stats } from '@/lib/api';
 import { formatDate, formatRange, formatTime } from '@/lib/format';
 import { hostJson, hostRequest } from '@/lib/nostr';
 import { HostBar, HostGate } from './HostGate';
+import { CohostsCard, InviteCodesCard, WalletCard } from './OwnerSettings';
 import { statusBadge } from './HostHome';
 
 const POLL_MS = 4000;
@@ -99,7 +101,10 @@ function Manage({ session }: { session: Parameters<typeof HostBar>[0]['session']
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <EventCover id={ev.id} coverVersion={ev.coverVersion} className="sm:w-56" />
             <div className="flex-1">
-              <div className="flex items-center gap-2">{statusBadge(ev.status)}</div>
+              <div className="flex items-center gap-2">
+                {statusBadge(ev.status)}
+                {ev.role === 'cohost' && <Badge variant="outline">{t.host.cohost}</Badge>}
+              </div>
               <h1 className="mt-2 text-2xl font-bold tracking-tight">{ev.title}</h1>
               <p className="text-sm text-muted-foreground">
                 {formatDate(ev.startsAt)} · {formatRange(ev.startsAt, ev.endsAt)}
@@ -130,9 +135,14 @@ function Manage({ session }: { session: Parameters<typeof HostBar>[0]['session']
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Counter label={t.host.manage.issued} value={issued} testId="count-issued" />
             <Counter label={t.host.manage.redeemed} value={redeemed} testId="count-redeemed" />
+            <Counter
+              label={t.host.manage.returned}
+              value={stats?.returned ?? ev.returned}
+              testId="count-returned"
+            />
             <Counter label={t.host.manage.capacity} value={ev.capacity} />
           </div>
           <div className="-mt-3 h-2 overflow-hidden rounded-full bg-muted">
@@ -153,7 +163,7 @@ function Manage({ session }: { session: Parameters<typeof HostBar>[0]['session']
 
           <p className="text-xs text-muted-foreground">{t.host.manage.notHeld}</p>
 
-          {ev.status !== 'cancelled' && (
+          {ev.status !== 'cancelled' && ev.role === 'owner' && (
             <div>
               <Button
                 variant="ghost"
@@ -167,7 +177,18 @@ function Manage({ session }: { session: Parameters<typeof HostBar>[0]['session']
           )}
         </div>
 
-        <ScannerLinks eventId={ev.id} links={links} onChange={reload} />
+        <div className="flex flex-col gap-6">
+          <ScannerLinks eventId={ev.id} links={links} onChange={reload} />
+          {ev.role === 'owner' ? (
+            <>
+              {ev.issuePolicy === 'paid' && <WalletCard ev={ev} onChange={reload} />}
+              {ev.issuePolicy === 'invite' && <InviteCodesCard eventId={ev.id} />}
+              <CohostsCard eventId={ev.id} />
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t.host.manage.ownerOnly}</p>
+          )}
+        </div>
       </div>
     </Layout>
   );

@@ -1,4 +1,4 @@
-import { ImagePlus, Lock, ShieldCheck } from 'lucide-react';
+import { ImagePlus, Lock, ShieldCheck, WifiOff } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Layout, PageMessage, Spinner } from '@/components/Layout';
@@ -26,6 +26,9 @@ function defaults(): EventInput {
     location: '',
     locationVisibility: 'public',
     capacity: 30,
+    issuePolicy: 'pow',
+    priceMsat: 0,
+    offlineCheckin: false,
   };
 }
 
@@ -54,6 +57,9 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
           location: ev.location,
           locationVisibility: ev.locationVisibility,
           capacity: ev.capacity,
+          issuePolicy: ev.issuePolicy,
+          priceMsat: ev.priceMsat,
+          offlineCheckin: ev.offlineCheckin,
         }),
       () => setError(t.app.networkError),
     );
@@ -218,15 +224,71 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
 
         <Card>
           <CardContent className="flex flex-col gap-2 pt-5 text-sm">
-            <p className="font-medium">{t.host.form.policy}</p>
-            <label className="flex items-center gap-2">
-              <input type="radio" checked readOnly className="accent-[var(--color-primary)]" />
-              {t.host.form.policyPow}
-            </label>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-1 font-medium">{t.host.form.policy}</legend>
+              {(
+                [
+                  ['pow', t.host.form.policyPow],
+                  ['invite', t.host.form.policyInvite],
+                  ['paid', t.host.form.policyPaid],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value} className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="issuePolicy"
+                    value={value}
+                    checked={input.issuePolicy === value}
+                    onChange={() => set('issuePolicy', value)}
+                    className="accent-[var(--color-primary)]"
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+            {input.issuePolicy === 'paid' && (
+              <div className="mt-1 flex flex-col gap-2 pl-6">
+                <Label htmlFor="price">{t.host.form.price}</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  min={1}
+                  required
+                  value={input.priceMsat ? Math.floor(input.priceMsat / 1000) : ''}
+                  onChange={(e) =>
+                    set('priceMsat', Math.max(0, Math.floor(Number(e.target.value))) * 1000)
+                  }
+                  className="w-40"
+                />
+                <p className="text-xs text-muted-foreground">{t.host.form.paidNote}</p>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">{t.host.form.policyNote}</p>
             <p className="mt-1 flex items-center gap-1.5 text-success">
-              <ShieldCheck className="size-4" />
-              {t.host.form.anonymity}
+              <ShieldCheck className="size-4 shrink-0" />
+              {t.host.form.anonymity[input.issuePolicy]}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-5 text-sm">
+            <label className="flex items-center gap-2 font-medium">
+              <input
+                type="checkbox"
+                className="size-4 accent-[var(--color-primary)]"
+                checked={input.offlineCheckin}
+                onChange={(e) => set('offlineCheckin', e.target.checked)}
+              />
+              <WifiOff className="size-4 text-muted-foreground" />
+              {t.host.form.offline}
+            </label>
+            <p
+              className={
+                input.offlineCheckin ? 'text-xs text-warning' : 'text-xs text-muted-foreground'
+              }
+            >
+              {t.host.form.offlineHint}
             </p>
           </CardContent>
         </Card>

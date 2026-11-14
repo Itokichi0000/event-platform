@@ -1,6 +1,7 @@
 import { InvalidSignatureError } from '@kamen/core';
 import {
   Calendar,
+  KeyRound,
   Lock,
   MapPin,
   Megaphone,
@@ -8,34 +9,59 @@ import {
   Ticket,
   Users,
   VenetianMask,
+  Zap,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { DateBadge, EventCover } from '@/components/EventCover';
 import { Layout, PageMessage, Spinner } from '@/components/Layout';
+import { PaymentPanel, type PaymentPhase } from '@/components/PaymentPanel';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { t } from '@/i18n';
+import { Input } from '@/components/ui/input';
+import { formatSats, t } from '@/i18n';
 import { api, ApiError, NetworkError, type PublicEvent } from '@/lib/api';
-import { ticketsForEvent, type StoredTicket } from '@/lib/db';
-import { formatDate, formatRange } from '@/lib/format';
+import {
+  pendingQuotesForEvent,
+  ticketsForEvent,
+  type PendingQuote,
+  type StoredTicket,
+} from '@/lib/db';
+import { formatDate, formatDateTime, formatRange } from '@/lib/format';
 import { shortNpub } from '@/lib/nostr';
-import { acquireTicket, type AcquireStage } from '@/lib/tickets';
+import {
+  acquireTicket,
+  claimPaidTicket,
+  dropQuote,
+  quoteState,
+  startPurchase,
+  type AcquireStage,
+} from '@/lib/tickets';
 
 type Load =
   | { state: 'loading' }
   | { state: 'error'; notFound: boolean }
   | { state: 'ready'; event: PublicEvent };
 
+const POLL_MS = 2500;
+
 export function EventPage() {
   const { id = '' } = useParams();
+  const { hash } = useLocation();
   const navigate = useNavigate();
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [held, setHeld] = useState<StoredTicket | null>(null);
   const [stage, setStage] = useState<{ stage: AcquireStage; progress?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Invite links carry the code in the fragment (#invite=…), which browsers never send to servers.
+  const [invite, setInvite] = useState(
+    () => new URLSearchParams(hash.slice(1)).get('invite') ?? '',
+  );
+  const [quote, setQuote] = useState<PendingQuote | null>(null);
+  const [payPhase, setPayPhase] = useState<PaymentPhase>('waiting');
+  const claiming = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -46,13 +72,65 @@ export function EventPage() {
         (e) =>
           alive && setLoad({ state: 'error', notFound: e instanceof ApiError && e.status === 404 }),
       );
-    ticketsForEvent(id)
-      .then((ts) => alive && setHeld(ts[0] ?? null))
-      .catch(() => {});
+    ticketsForEvent(id).then(
+      (ts) => alive && setHeld(ts[0] ?? null),
+      () => {},
+    );
+    // Resume a payment started earlier on this device.
+    pendingQuotesForEvent(id).then(
+      (qs) =>
+        alive && qs.length > 0 && setQuote(qs.sort((a, b) => b.createdAt - a.createdAt)[0] ?? null),
+      () => {},
+    );
     return () => {
       alive = false;
     };
   }, [id]);
+
+  const fail = useCallback((e: unknown, ev: PublicEvent) => {
+    setStage(null);
+    if (e instanceof InvalidSignatureError) setError(t.event.errors.invalid_signature);
+    else if (e instanceof NetworkError) setError(t.app.networkError);
+    else if (e instanceof ApiError && e.code in t.event.errors) {
+      setError(t.event.errors[e.code as keyof typeof t.event.errors]);
+      if (e.code === 'sold_out') setLoad({ state: 'ready', event: { ...ev, remaining: 0 } });
+    } else setError(t.event.errors.generic);
+  }, []);
+
+  // Poll the payment state of an outstanding invoice and claim the ticket once paid.
+  useEffect(() => {
+    if (!quote || load.state !== 'ready') return;
+    const ev = load.event;
+    let alive = true;
+    const tick = async () => {
+      if (claiming.current) return;
+      try {
+        const state = await quoteState(quote);
+        if (!alive) return;
+        if (state === 'expired') return setPayPhase('expired');
+        if (state === 'issued') {
+          // Issued but not on this device: nothing more can be done with this quote.
+          await dropQuote(quote);
+          setQuote(null);
+          return setError(t.event.errors.quote_already_used);
+        }
+        if (state !== 'paid') return;
+        claiming.current = true;
+        setPayPhase('paid');
+        const ticket = await claimPaidTicket(ev, quote, (s) => setStage({ stage: s }));
+        navigate(`/t/${ticket.id}?new=1`);
+      } catch (e) {
+        claiming.current = false;
+        if (!(e instanceof NetworkError)) fail(e, ev);
+      }
+    };
+    void tick();
+    const h = setInterval(() => void tick(), POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(h);
+    };
+  }, [quote, load, navigate, fail]);
 
   if (load.state === 'loading') {
     return (
@@ -78,28 +156,55 @@ export function EventPage() {
   const ev = load.event;
   const ended = ev.endsAt <= Date.now();
   const soldOut = ev.remaining <= 0;
-  const canJoin = ev.status === 'published' && !ended && !soldOut && !held;
+  const paid = ev.issuePolicy === 'paid';
+  const blocked = ev.status !== 'published' || ended || soldOut || (paid && !ev.paymentsReady);
+  const canJoin = !blocked && !held && !(ev.issuePolicy === 'invite' && !invite.trim());
 
   async function join() {
     setError(null);
     try {
-      const ticket = await acquireTicket(ev, (s, p) =>
-        setStage({ stage: s, ...(p === undefined ? {} : { progress: p }) }),
+      if (paid) {
+        setStage({ stage: 'invoice' });
+        const q = await startPurchase(ev);
+        setStage(null);
+        setPayPhase('waiting');
+        setQuote(q);
+        return;
+      }
+      const ticket = await acquireTicket(
+        ev,
+        (s, p) => setStage({ stage: s, ...(p === undefined ? {} : { progress: p }) }),
+        ev.issuePolicy === 'invite' ? { invite: invite.trim() } : {},
       );
       navigate(`/t/${ticket.id}?new=1`);
     } catch (e) {
-      setStage(null);
-      if (e instanceof InvalidSignatureError) setError(t.event.errors.invalid_signature);
-      else if (e instanceof NetworkError) setError(t.app.networkError);
-      else if (e instanceof ApiError && e.code in t.event.errors) {
-        setError(t.event.errors[e.code as keyof typeof t.event.errors]);
-        if (e.code === 'sold_out') setLoad({ state: 'ready', event: { ...ev, remaining: 0 } });
-      } else setError(t.event.errors.generic);
+      fail(e, ev);
     }
   }
 
+  async function retryPayment() {
+    if (quote) await dropQuote(quote);
+    setQuote(null);
+    claiming.current = false;
+    await join();
+  }
+
+  const joinLabel = ended
+    ? t.event.ended
+    : ev.status === 'cancelled'
+      ? t.event.cancelled
+      : soldOut
+        ? t.event.soldOut
+        : paid
+          ? ev.paymentsReady
+            ? t.event.joinPaid(formatSats(ev.priceMsat))
+            : t.event.paymentsNotReady
+          : ev.issuePolicy === 'invite'
+            ? t.event.joinInvite
+            : t.event.joinFree;
+
   return (
-    <Layout className="pb-32">
+    <Layout className="pb-40">
       {ev.status === 'draft' && (
         <Alert variant="warning" className="mb-4">
           {t.event.draft}
@@ -147,13 +252,28 @@ export function EventPage() {
             {t.event.hostedBy}:{' '}
             <span className="font-mono text-foreground">{shortNpub(ev.hostPubkey)}</span>
           </span>
-          <span aria-hidden>·</span>
           <Badge variant={soldOut ? 'destructive' : 'secondary'}>
             <Users />
             {soldOut ? t.event.soldOut : t.event.remaining(ev.remaining, ev.capacity)}
           </Badge>
+          <Badge variant={paid ? 'default' : 'success'}>
+            {paid ? <Zap /> : <Ticket />}
+            {paid ? formatSats(ev.priceMsat) : t.event.free}
+          </Badge>
+          {ev.issuePolicy === 'invite' && (
+            <Badge variant="outline">
+              <KeyRound />
+              {t.event.inviteOnly}
+            </Badge>
+          )}
         </div>
       </div>
+
+      {quote && !held && (
+        <section className="mt-8">
+          <PaymentPanel quote={quote} phase={payPhase} onRetry={retryPayment} />
+        </section>
+      )}
 
       {ev.announcements.length > 0 && (
         <section className="mt-8">
@@ -167,11 +287,7 @@ export function EventPage() {
                 <CardContent className="pt-4">
                   <p className="whitespace-pre-wrap text-sm">{a.body}</p>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {formatDate(a.createdAt)}{' '}
-                    {new Date(a.createdAt).toLocaleTimeString('ja-JP', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                    {formatDateTime(a.createdAt)}
                   </p>
                 </CardContent>
               </Card>
@@ -204,6 +320,13 @@ export function EventPage() {
                 </li>
               ))}
             </ul>
+            {ev.issuePolicy === 'invite' && <p className="mt-3 text-sm">{t.event.privacyInvite}</p>}
+            {paid && <p className="mt-3 text-sm">{t.event.privacyPaid}</p>}
+            {ev.offlineCheckin && (
+              <p className="mt-3 text-sm text-warning" data-testid="offline-notice">
+                {t.event.privacyOffline}
+              </p>
+            )}
             <p className="mt-3 text-xs text-muted-foreground">{t.event.privacyNote}</p>
           </CardContent>
         </Card>
@@ -236,17 +359,24 @@ export function EventPage() {
                 />
               </div>
             </div>
-          ) : (
-            <Button size="xl" className="w-full" disabled={!canJoin} onClick={join}>
-              <Ticket />
-              {ended
-                ? t.event.ended
-                : soldOut
-                  ? t.event.soldOut
-                  : ev.status === 'cancelled'
-                    ? t.event.cancelled
-                    : t.event.joinFree}
-            </Button>
+          ) : quote ? null : (
+            <>
+              {ev.issuePolicy === 'invite' && !blocked && (
+                <Input
+                  value={invite}
+                  onChange={(e) => setInvite(e.target.value)}
+                  placeholder={t.event.invitePlaceholder}
+                  aria-label={t.event.inviteLabel}
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  className="text-center font-mono tracking-widest"
+                />
+              )}
+              <Button size="xl" className="w-full" disabled={!canJoin} onClick={join}>
+                {paid ? <Zap /> : <Ticket />}
+                {joinLabel}
+              </Button>
+            </>
           )}
           <p className="flex items-center justify-center gap-1 pb-1 text-xs text-muted-foreground">
             <Calendar className="size-3" />
@@ -261,7 +391,10 @@ export function EventPage() {
 function progressOf(s: { stage: AcquireStage; progress?: number }): number {
   switch (s.stage) {
     case 'challenge':
+    case 'invoice':
       return 0.05;
+    case 'pay':
+      return 0.3;
     case 'work':
       return 0.05 + 0.8 * (s.progress ?? 0);
     case 'issue':

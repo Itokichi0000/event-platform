@@ -1,4 +1,4 @@
-const locale = 'ja-JP';
+import { locale } from '@/i18n';
 
 export function formatDate(ms: number): string {
   return new Intl.DateTimeFormat(locale, {
@@ -20,9 +20,8 @@ export function formatRange(start: number, end: number): string {
     : `${formatTime(start)} – ${formatDate(end)} ${formatTime(end)}`;
 }
 
-export function monthDay(ms: number): { month: string; day: string } {
-  const d = new Date(ms);
-  return { month: `${d.getMonth() + 1}月`, day: String(d.getDate()) };
+export function monthShort(ms: number): string {
+  return new Intl.DateTimeFormat(locale, { month: 'short' }).format(ms);
 }
 
 /** For <input type="datetime-local"> (local time). */
@@ -34,4 +33,8 @@ export function toLocalInput(ms: number): string {
 
 export function fromLocalInput(value: string): number {
   return new Date(value).getTime();
+}
+
+export function formatDateTime(ms: number): string {
+  return `${formatDate(ms)} ${formatTime(ms)}`;
 }

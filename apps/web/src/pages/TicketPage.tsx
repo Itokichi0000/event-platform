@@ -7,6 +7,7 @@ import {
   Smartphone,
   Sun,
   Trash2,
+  Undo2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
@@ -20,7 +21,7 @@ import { t } from '@/i18n';
 import { deleteTicket, getTicket, updateTicket, type StoredTicket } from '@/lib/db';
 import { formatDate, formatRange } from '@/lib/format';
 import { checkStorage, type StorageStatus } from '@/lib/storage';
-import { backupTextFor, qrTextFor } from '@/lib/tickets';
+import { backupTextFor, qrTextFor, refreshTicket, returnTicket } from '@/lib/tickets';
 import { useInstallPrompt } from '@/lib/install';
 
 export function TicketPage() {
@@ -33,12 +34,28 @@ export function TicketPage() {
   const [copied, setCopied] = useState(false);
   const install = useInstallPrompt();
 
+  const [returning, setReturning] = useState(false);
+  const [returnError, setReturnError] = useState(false);
+
   useEffect(() => {
+    let alive = true;
     getTicket(id).then(
-      (tk) => setTicket(tk ?? null),
-      () => setTicket(null),
+      async (tk) => {
+        if (!alive) return;
+        setTicket(tk ?? null);
+        // Online: pick up cancellation, venue changes and the offline check-in setting.
+        const fresh = tk ? await refreshTicket(tk) : null;
+        if (alive && fresh) setTicket(fresh.ticket);
+      },
+      () => alive && setTicket(null),
     );
-    checkStorage().then(setStorage, () => {});
+    checkStorage().then(
+      (s) => alive && setStorage(s),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
   }, [id]);
 
   if (ticket === undefined) {
@@ -79,6 +96,19 @@ export function TicketPage() {
     downloadBlob(await qrPng(qrTextFor(tk), tk.event.title), `kamen-ticket.png`);
   }
 
+  async function giveBack() {
+    if (!confirm(t.ticket.returnConfirm)) return;
+    setReturning(true);
+    setReturnError(false);
+    try {
+      await returnTicket(tk);
+      navigate('/tickets?returned=1');
+    } catch {
+      setReturning(false);
+      setReturnError(true);
+    }
+  }
+
   async function remove() {
     if (!confirm(t.ticket.deleteConfirm)) return;
     await deleteTicket(tk.id);
@@ -86,9 +116,16 @@ export function TicketPage() {
   }
 
   const needsBackup = tk.backedUpAt === null;
+  const cancelled = tk.event.status === 'cancelled';
+  const returnable = !cancelled && tk.event.endsAt > Date.now();
 
   return (
     <Layout>
+      {cancelled && (
+        <Alert variant="destructive" className="mb-4">
+          {t.ticket.cancelled}
+        </Alert>
+      )}
       <div className="flex flex-col items-center text-center">
         <Badge variant="secondary" className="mb-3">
           {t.ticket.title}
@@ -114,6 +151,14 @@ export function TicketPage() {
           <Sun className="size-3" />
           {t.ticket.brightness}
         </p>
+        {tk.event.offlineCheckin && (
+          <p
+            className="max-w-sm text-center text-xs text-warning"
+            data-testid="ticket-offline-note"
+          >
+            {t.ticket.offlineNote}
+          </p>
+        )}
       </div>
 
       {storage?.likelyPrivate && (
@@ -162,6 +207,28 @@ export function TicketPage() {
             <p className="flex-1 text-sm">{t.ticket.installHint}</p>
             <Button size="sm" variant="outline" onClick={install.prompt}>
               {t.ticket.install}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {returnable && (
+        <Card className="mt-4">
+          <CardContent className="flex flex-col gap-2 pt-5">
+            <h2 className="font-semibold">{t.ticket.returnTitle}</h2>
+            <p className="text-sm text-muted-foreground">{t.ticket.returnBody}</p>
+            {tk.event.issuePolicy === 'paid' && (
+              <p className="text-sm text-warning">{t.ticket.returnPaid}</p>
+            )}
+            {returnError && <p className="text-sm text-destructive">{t.ticket.returnFailed}</p>}
+            <Button
+              variant="outline"
+              className="self-start"
+              onClick={giveBack}
+              disabled={returning}
+            >
+              {returning ? <Spinner /> : <Undo2 />}
+              {t.ticket.returnButton}
             </Button>
           </CardContent>
         </Card>

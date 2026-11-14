@@ -1,4 +1,4 @@
-/** All UI copy lives here (CLAUDE.md). English is added in phase 2 with the same shape. */
+/** All UI copy lives here (CLAUDE.md). `en.ts` must have exactly the same shape (tested). */
 export const ja = {
   app: {
     name: 'Kamen',
@@ -12,8 +12,11 @@ export const ja = {
     networkError: '通信できませんでした。電波の良い場所でもう一度お試しください。',
     notFound: 'ページが見つかりません',
     home: 'トップへ',
+    language: 'English',
+    sats: (n: number) => `${n.toLocaleString('ja-JP')} sats`,
   },
   home: {
+    hero: ['仮面をつけて、', '会いに行こう。'],
     lead: '身元を明かさずに、物理イベントへ参加登録・入場できます。',
     points: [
       ['名前・メール・電話番号は聞きません', 'チケットはこのブラウザの中にだけ保存されます。'],
@@ -29,6 +32,28 @@ export const ja = {
   event: {
     join: '参加する',
     joinFree: '無料で参加する',
+    joinInvite: '招待コードで参加する',
+    joinPaid: (price: string) => `${price} で参加する`,
+    free: '無料',
+    inviteLabel: '招待コード',
+    invitePlaceholder: 'XXXXX-XXXXX',
+    inviteOnly: '招待制のイベントです',
+    paymentsNotReady: '主催者が支払いの受け付けを準備中です',
+    pay: {
+      title: 'Lightningで支払う',
+      body: 'ウォレットでQRを読み取るか、下のボタンで開いてください。支払いは主催者のウォレットに直接届きます。',
+      openWallet: 'ウォレットで開く',
+      copy: '請求書をコピー',
+      copied: 'コピーしました',
+      waiting: '支払いを待っています…',
+      paid: '支払いを確認しました。チケットを発行しています…',
+      expired: '請求書の期限が切れました。',
+      retry: 'もう一度請求書を作る',
+      expiresIn: (m: number) => `あと ${m} 分有効`,
+      keepOpen:
+        '支払いが終わるまでこの画面を閉じないでください。閉じても、このページを開き直せば続きから受け取れます。',
+      noRefund: '返却しても返金はされません。',
+    },
     showTicket: 'チケットを表示',
     soldOut: '満席です',
     ended: 'このイベントは終了しました',
@@ -46,8 +71,16 @@ export const ja = {
       'サーバーも主催者も、発行したチケットと入場を結びつけられません',
     ],
     privacyNote: '会場で顔は見られます。参加者が少ないイベントでは匿名性も小さくなります。',
+    privacyInvite:
+      '招待コードを1人ずつ配られている場合、主催者は「あなたがチケットを取ったこと」を知ります。来場したかどうかは分かりません。',
+    privacyPaid:
+      '支払いはLightningで主催者のウォレットに直接届きます。サーバーは支払った人を記録せず、支払いとチケットを結びつけません。',
+    privacyOffline:
+      'このイベントはオフライン受付を使います。QRに検証用の値が入るため、受付端末とサーバーが結託すると、発行と入場を結びつけられる可能性があります。',
     stage: {
       challenge: '準備しています…',
+      invoice: '請求書を作っています…',
+      pay: '支払いを待っています…',
       work: 'スパム対策の計算をしています…',
       issue: 'チケットを発行しています…',
       save: '端末に保存しています…',
@@ -57,6 +90,12 @@ export const ja = {
       event_ended: 'イベントは終了しました。',
       event_cancelled: 'イベントは中止になりました。',
       event_not_published: 'まだ公開されていません。',
+      invalid_invite: '招待コードが正しくないか、使用回数の上限に達しています。',
+      invite_required: '招待コードを入力してください。',
+      payments_not_configured: '主催者が支払いの受け付けを準備中です。',
+      wallet_unavailable:
+        '主催者のウォレットに接続できませんでした。少し待ってからお試しください。',
+      quote_already_used: 'この支払いのチケットはすでに発行されています。',
       invalid_signature:
         'サーバーの署名が公開鍵と一致しませんでした。安全のためチケットを保存しませんでした。',
       generic: 'チケットを取得できませんでした。もう一度お試しください。',
@@ -88,6 +127,17 @@ export const ja = {
     deleteConfirm: 'このチケットを端末から削除しますか？バックアップがなければ元に戻せません。',
     notFound: 'このチケットはこの端末にありません',
     hiddenLocation: '場所（チケット保持者のみ）',
+    cancelled: 'このイベントは中止になりました。',
+    offlineNote:
+      'このイベントはオフライン受付のため、QRに検証用の値が含まれています（受付端末とサーバーが結託すると発行と入場を結びつけられる可能性があります）。',
+    returnTitle: '行けなくなったら',
+    returnBody:
+      'チケットを返却すると枠が1つ空き、ほかの人が参加できます。返却したチケットは使えなくなります。',
+    returnPaid: '有料チケットは返却しても返金されません。',
+    returnButton: 'チケットを返却',
+    returnConfirm: 'チケットを返却しますか？元に戻せません。',
+    returned: 'チケットを返却しました',
+    returnFailed: '返却できませんでした。',
   },
   restore: {
     title: 'バックアップから復元',
@@ -112,6 +162,7 @@ export const ja = {
     loginFailed: 'ログインできませんでした。拡張機能で署名を許可したか確認してください。',
     logout: 'ログアウト',
     loggedInAs: 'ログイン中',
+    cohost: '共同主催',
     newEvent: '新しいイベント',
     noEvents: 'まだイベントはありません',
     status: { draft: '下書き', published: '公開中', cancelled: '中止' },
@@ -130,8 +181,20 @@ export const ja = {
         'JPEG・PNG・WebP。自動で縮小します。外部URLの画像は使えません（参加者のIPが漏れるため）。',
       policy: '発行条件',
       policyPow: '誰でも（スパム対策の計算つき）',
-      policyNote: '招待コード・有料・承認制はフェーズ2以降で対応します。',
-      anonymity: '参加者の匿名性：最大（名前・メール不要、発行と入場は結びつかない）',
+      policyInvite: '招待コードを持っている人',
+      policyPaid: '有料（Lightning）',
+      price: '価格（sats）',
+      policyNote: '承認制はフェーズ4で対応します。',
+      anonymity: {
+        pow: '参加者の匿名性：最大（名前・メール不要、発行と入場は結びつかない）',
+        invite:
+          '参加者の匿名性：高（コードを1人ずつ配ると、誰がチケットを取ったかは分かる。誰が来たかは分からない）',
+        paid: '参加者の匿名性：高（支払いはウォレットに直接届く。支払いと入場は結びつかない）',
+      },
+      paidNote: '作成後、管理画面でウォレット（NWC）を接続してください。',
+      offline: 'オフライン受付を使う',
+      offlineHint:
+        '会場の電波が悪いときでも受付できます。ただしQRに検証用の値が入るため、受付端末とサーバーが結託すると発行と入場を結びつけられるようになります（参加者にも表示されます）。複数の端末で同時にオフライン受付をすると二重入場を防ぎきれません。',
       create: '作成する（下書き）',
       save: '保存',
       saving: '保存中…',
@@ -150,6 +213,7 @@ export const ja = {
       copyLink: 'URLをコピー',
       issued: '発行',
       redeemed: '来場',
+      returned: '返却',
       capacity: '定員',
       checkins: '来場の推移（15分ごと）',
       noCheckins: 'まだ来場はありません',
@@ -166,6 +230,52 @@ export const ja = {
       revoked: '失効済み',
       expires: '期限',
       notHeld: '主催者が得られない情報：参加者名簿、個人の来場履歴、誰のチケットが使われたか。',
+      ownerOnly: '主催者本人だけが変更できます',
+      wallet: {
+        title: 'ウォレット（NWC）',
+        body: '有料チケットの請求書は、あなたのウォレットに直接作られます。請求書の作成と確認（make_invoice・lookup_invoice）だけを許可した接続文字列を貼り付けてください。',
+        placeholder: 'nostr+walletconnect://...',
+        connect: '接続',
+        disconnect: '接続を解除',
+        connected: '接続済み',
+        notConnected: '未接続。接続するまで有料チケットは販売できません。',
+        canSpend:
+          'この接続には支払い権限があります。サーバーは使いませんが、受け取り専用の接続にすることを強くおすすめします。',
+        errors: {
+          invalid_nwc_uri: '接続文字列の形式が正しくありません。',
+          wallet_unreachable: 'ウォレットに接続できませんでした。',
+          wallet_missing_methods: 'この接続では請求書を作成・確認できません。',
+          generic: '接続できませんでした。',
+        },
+      },
+      invites: {
+        title: '招待コード',
+        body: 'コードを知っている人だけがチケットを取れます。コードはサーバーにハッシュでしか保存されないため、作成時にしか表示されません。',
+        label: 'メモ（例：Telegramグループ）',
+        uses: '使用回数',
+        custom: 'コードを自分で決める（任意、6文字以上）',
+        create: 'コードを作成',
+        once: 'このコードと招待リンクは今だけ表示されます。',
+        link: '招待リンク',
+        remaining: (left: number, max: number) => `残り ${left} / ${max} 回`,
+        delete: '削除',
+        errors: {
+          invite_code_exists: '同じコードがすでにあります。',
+          generic: '作成できませんでした。',
+        },
+      },
+      cohosts: {
+        title: '共同主催者',
+        body: '共同主催者は、編集・お知らせ・受付リンクの発行・集計の閲覧ができます。中止・ウォレット・招待コード・共同主催者の管理はできません。',
+        placeholder: 'npub1...',
+        add: '追加',
+        remove: '削除',
+        errors: {
+          invalid_pubkey: 'npubが正しくありません。',
+          already_owner: 'あなた自身です。',
+          generic: '追加できませんでした。',
+        },
+      },
     },
   },
   scanner: {
@@ -187,7 +297,30 @@ export const ja = {
     network: '通信エラー。もう一度読み取ってください。',
     counter: (r: number, i: number) => `来場 ${r} / 発行 ${i}`,
     tapToContinue: 'タップして次へ',
+    okOffline: '入場OK（オフライン判定）',
+    usedHere: 'この端末で使用済みです',
+    offlineBanner:
+      'オフライン：端末内の記録で判定しています。ほかの端末でも同時にオフライン受付をしていると、二重入場を防げません。',
+    offlineUnsupported:
+      'このイベントはオフライン受付に対応していません。電波の届く場所で読み取ってください。',
+    noDleq: 'オフラインでは確認できないQRです。参加者にチケット画面を開き直してもらってください。',
+    pending: (n: number) => `未同期 ${n} 件`,
+    syncNow: '今すぐ同期',
+    conflicts: '競合（ほかの端末で使用済みだったチケット）',
+    conflictsHint:
+      '同期したとき、ほかの端末ですでに使われていたチケットです。二重入場の可能性があります。',
+    clearConflicts: '一覧を消去',
+    cached: '前回オンラインだったときの情報で動いています',
   },
 } as const;
 
-export type Dict = typeof ja;
+/** `ja` with every string literal widened to `string`, so other languages can fill it in. */
+type Widen<T> = T extends string
+  ? string
+  : T extends (...args: infer A) => infer R
+    ? (...args: A) => Widen<R>
+    : T extends readonly (infer U)[]
+      ? readonly Widen<U>[]
+      : { readonly [K in keyof T]: Widen<T[K]> };
+
+export type Dict = Widen<typeof ja>;

@@ -63,6 +63,7 @@ function HostEvents({ session }: { session: Parameters<typeof HostBar>[0]['sessi
                     <p className="text-sm text-muted-foreground">{formatDate(ev.startsAt)}</p>
                     <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                       {statusBadge(ev.status)}
+                      {ev.role === 'cohost' && <Badge variant="outline">{t.host.cohost}</Badge>}
                       <span className="tabular-nums">
                         {t.host.manage.issued} {ev.issued}/{ev.capacity} · {t.host.manage.redeemed}{' '}
                         {ev.redeemed}

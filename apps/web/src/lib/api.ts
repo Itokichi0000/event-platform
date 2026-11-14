@@ -12,6 +12,8 @@ export interface Announcement {
   createdAt: number;
 }
 
+export type IssuePolicy = 'pow' | 'invite' | 'paid';
+
 export interface PublicEvent {
   id: string;
   hostPubkey: string;
@@ -23,7 +25,9 @@ export interface PublicEvent {
   locationVisibility: 'public' | 'ticket_holders';
   capacity: number;
   remaining: number;
-  issuePolicy: 'pow';
+  issuePolicy: IssuePolicy;
+  priceMsat: number;
+  paymentsReady: boolean;
   status: 'draft' | 'published' | 'cancelled';
   coverVersion: number | null;
   offlineCheckin: boolean;
@@ -35,6 +39,9 @@ export interface HostEvent extends PublicEvent {
   location: string;
   issued: number;
   redeemed: number;
+  returned: number;
+  walletConnected: boolean;
+  role: 'owner' | 'cohost';
   createdAt: number;
   updatedAt: number;
 }
@@ -47,12 +54,16 @@ export interface EventInput {
   location: string;
   locationVisibility: 'public' | 'ticket_holders';
   capacity: number;
+  issuePolicy: IssuePolicy;
+  priceMsat: number;
+  offlineCheckin: boolean;
 }
 
 export interface Stats {
   capacity: number;
   issued: number;
   redeemed: number;
+  returned: number;
   checkinsPer15Min: { start: number; count: number }[];
 }
 
@@ -62,6 +73,29 @@ export interface ScannerLink {
   expiresAt: number;
   revokedAt: number | null;
   createdAt: number;
+}
+
+export interface InviteCode {
+  id: string;
+  label: string;
+  maxUses: number;
+  usesLeft: number;
+}
+
+export type Quote =
+  | { kind: 'pow'; challenge: PowChallenge }
+  | { kind: 'invoice'; quoteId: string; invoice: string; amountMsat: number; expiresAt: number };
+
+export type QuoteState = 'unpaid' | 'paid' | 'issued' | 'expired';
+
+export interface ScannerSession {
+  eventId: string;
+  title: string;
+  expiresAt: number;
+  issued: number;
+  redeemed: number;
+  offlineCheckin: boolean;
+  status: PublicEvent['status'];
 }
 
 export class ApiError extends Error {
@@ -102,40 +136,40 @@ const json = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+const ev = (id: string) => `/api/events/${encodeURIComponent(id)}`;
+const bearer = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
+
 export const api = {
-  event: (id: string) => request<PublicEvent>(`/api/events/${encodeURIComponent(id)}`),
-  coverUrl: (id: string, version: number) =>
-    `/api/events/${encodeURIComponent(id)}/cover?v=${version}`,
-  quote: (id: string) =>
-    request<{ kind: 'pow'; challenge: PowChallenge }>(
-      `/api/events/${encodeURIComponent(id)}/quote`,
-      { method: 'POST' },
+  event: (id: string) => request<PublicEvent>(ev(id)),
+  coverUrl: (id: string, version: number) => `${ev(id)}/cover?v=${version}`,
+  quote: (id: string) => request<Quote>(`${ev(id)}/quote`, { method: 'POST' }),
+  quoteStatus: (id: string, quoteId: string) =>
+    request<{ state: QuoteState; expiresAt: number }>(
+      `${ev(id)}/quotes/${encodeURIComponent(quoteId)}`,
     ),
   issue: (
     id: string,
-    body: { pow: { challenge: PowChallenge; nonce: number }; outputs: { ticket: IssueRequest } },
+    body: {
+      pow?: { challenge: PowChallenge; nonce: number };
+      invite?: string;
+      quoteId?: string;
+      outputs: { ticket: IssueRequest };
+    },
   ) =>
     request<{ signatures: { ticket: IssueResponse }; location: string | null }>(
-      `/api/events/${encodeURIComponent(id)}/issue`,
+      `${ev(id)}/issue`,
       json(body),
     ),
+  returnTicket: (id: string, payload: RedeemPayload) =>
+    request<{ ok: true }>(`${ev(id)}/return`, json(payload)),
   scannerSession: (id: string, token: string) =>
-    request<{
-      eventId: string;
-      title: string;
-      expiresAt: number;
-      issued: number;
-      redeemed: number;
-    }>(`/api/events/${encodeURIComponent(id)}/scanner-session`, {
-      headers: { authorization: `Bearer ${token}` },
-    }),
+    request<ScannerSession>(`${ev(id)}/scanner-session`, bearer(token)),
+  spentList: (id: string, token: string) =>
+    request<{ ys: string[] }>(`${ev(id)}/spent`, bearer(token)),
   redeem: (id: string, token: string, payload: RedeemPayload) =>
-    request<{ ok: true; redeemed: number; capacity: number; issued: number }>(
-      `/api/events/${encodeURIComponent(id)}/redeem`,
-      {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      },
-    ),
+    request<{ ok: true; redeemed: number; capacity: number; issued: number }>(`${ev(id)}/redeem`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
 };

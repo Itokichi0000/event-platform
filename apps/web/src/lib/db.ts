@@ -14,6 +14,9 @@ export interface EventSnapshot {
   locationVisibility: 'public' | 'ticket_holders';
   offlineCheckin: boolean;
   hostPubkey: string;
+  /** Added in phase 2; absent on tickets saved earlier. */
+  issuePolicy?: 'pow' | 'invite' | 'paid';
+  status?: 'draft' | 'published' | 'cancelled';
 }
 
 export interface StoredTicket {
@@ -26,11 +29,29 @@ export interface StoredTicket {
   backedUpAt: number | null;
 }
 
+/**
+ * A Lightning invoice the participant is paying or has paid. Kept until the ticket is issued,
+ * because the quote id is the only claim to the ticket (the server does not know who paid).
+ */
+export interface PendingQuote {
+  quoteId: string;
+  eventId: string;
+  invoice: string;
+  amountMsat: number;
+  expiresAt: number;
+  createdAt: number;
+}
+
 interface KamenDB extends DBSchema {
   tickets: {
     key: string;
     value: StoredTicket;
     indexes: { bySecret: string; byEvent: string };
+  };
+  pendingQuotes: {
+    key: string;
+    value: PendingQuote;
+    indexes: { byEvent: string };
   };
 }
 
@@ -38,11 +59,17 @@ const DB_NAME = 'kamen';
 let dbPromise: Promise<IDBPDatabase<KamenDB>> | null = null;
 
 export function db(): Promise<IDBPDatabase<KamenDB>> {
-  dbPromise ??= openDB<KamenDB>(DB_NAME, 1, {
-    upgrade(d) {
-      const tickets = d.createObjectStore('tickets', { keyPath: 'id' });
-      tickets.createIndex('bySecret', 'token.secret', { unique: true });
-      tickets.createIndex('byEvent', 'token.eventId');
+  dbPromise ??= openDB<KamenDB>(DB_NAME, 2, {
+    upgrade(d, oldVersion) {
+      if (oldVersion < 1) {
+        const tickets = d.createObjectStore('tickets', { keyPath: 'id' });
+        tickets.createIndex('bySecret', 'token.secret', { unique: true });
+        tickets.createIndex('byEvent', 'token.eventId');
+      }
+      if (oldVersion < 2) {
+        const quotes = d.createObjectStore('pendingQuotes', { keyPath: 'quoteId' });
+        quotes.createIndex('byEvent', 'eventId');
+      }
     },
   });
   return dbPromise;
@@ -107,4 +134,16 @@ export async function updateTicket(id: string, patch: Partial<Omit<StoredTicket,
 
 export async function deleteTicket(id: string): Promise<void> {
   await (await db()).delete('tickets', id);
+}
+
+export async function savePendingQuote(q: PendingQuote): Promise<void> {
+  await (await db()).put('pendingQuotes', q);
+}
+
+export async function pendingQuotesForEvent(eventId: string): Promise<PendingQuote[]> {
+  return (await db()).getAllFromIndex('pendingQuotes', 'byEvent', eventId);
+}
+
+export async function deletePendingQuote(quoteId: string): Promise<void> {
+  await (await db()).delete('pendingQuotes', quoteId);
 }

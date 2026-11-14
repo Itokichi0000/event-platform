@@ -1,8 +1,9 @@
 import { ChevronRight, MapPin, RotateCcw, Ticket } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { DateBadge } from '@/components/EventCover';
 import { Layout, PageMessage, Spinner } from '@/components/Layout';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { t } from '@/i18n';
@@ -11,6 +12,7 @@ import { formatDate, formatRange } from '@/lib/format';
 
 export function MyTickets() {
   const [tickets, setTickets] = useState<StoredTicket[] | null>(null);
+  const [params] = useSearchParams();
   useEffect(() => {
     listTickets().then(setTickets, () => setTickets([]));
   }, []);
@@ -26,6 +28,11 @@ export function MyTickets() {
           </Link>
         </Button>
       </div>
+      {params.get('returned') === '1' && (
+        <Alert variant="success" className="mb-4">
+          {t.ticket.returned}
+        </Alert>
+      )}
       {tickets === null ? (
         <PageMessage title={t.app.loading}>
           <Spinner />
