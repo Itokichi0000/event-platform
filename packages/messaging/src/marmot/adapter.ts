@@ -92,7 +92,7 @@ export class MarmotAdapter implements MessagingAdapter {
 
   async publishKeyPackage(): Promise<SignedEvent> {
     await this.#client.keyPackages.create({ relays: this.#relays });
-    const event = this.#network.held.findLast((e) => e.kind === KEY_PACKAGE_KIND);
+    const event = this.#network.held.filter((e) => e.kind === KEY_PACKAGE_KIND).at(-1);
     if (!event) throw new Error('key package was not produced');
     return event;
   }

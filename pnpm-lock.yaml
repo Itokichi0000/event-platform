@@ -56,6 +56,15 @@ importers:
       '@kamen/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@kamen/messaging':
+        specifier: workspace:*
+        version: link:../../packages/messaging
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
       better-sqlite3:
         specifier: 13.2.0
         version: 13.2.0

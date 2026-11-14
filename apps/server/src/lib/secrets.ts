@@ -12,8 +12,8 @@ export function deriveKey(masterKey: Uint8Array, purpose: string): Buffer {
 export class KeyVault {
   readonly #key: Buffer;
 
-  constructor(masterKey: Uint8Array) {
-    this.#key = deriveKey(masterKey, 'keyset-enc');
+  constructor(masterKey: Uint8Array, purpose = 'keyset-enc') {
+    this.#key = deriveKey(masterKey, purpose);
   }
 
   encrypt(plaintextHex: string, keysetId: string): string {
