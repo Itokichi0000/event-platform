@@ -115,3 +115,39 @@ describe('door QR policy (DLEQ only for offline check-in)', () => {
     );
   });
 });
+
+describe('check-in extras', () => {
+  const point = () => makeToken().C; // any valid compressed point
+  it('round-trip stamp / vote blinded messages and a deposit reference', () => {
+    const t = makeToken();
+    const extras = { stampB_: point(), voteB_: point(), depositRef: 'ab'.repeat(16) };
+    const decoded = decodeToken(encodeQrToken(t, { offlineCheckin: false }, extras));
+    expect(decoded.extras).toEqual(extras);
+    expect(decoded.dleq).toBeUndefined();
+    expect(decoded.secret).toBe(t.secret);
+  });
+
+  it('each extra is optional; the QR stays scannable-sized with all of them', () => {
+    const t = makeToken();
+    expect(
+      decodeToken(encodeQrToken(t, { offlineCheckin: true }, { voteB_: point() })).extras,
+    ).toEqual({
+      voteB_: expect.any(String),
+    });
+    const full = encodeQrToken(
+      t,
+      { offlineCheckin: false },
+      { stampB_: point(), voteB_: point(), depositRef: '00'.repeat(16) },
+    );
+    expect(full.length).toBeLessThan(300);
+    expect(decodeToken(encodeQrToken(t, { offlineCheckin: false })).extras).toBeUndefined();
+  });
+
+  it('rejects malformed extras', () => {
+    const t = makeToken();
+    expect(() => encodeToken({ ...t, extras: { stampB_: '02' + '00'.repeat(32) } })).toThrow(
+      /extras/,
+    );
+    expect(() => encodeToken({ ...t, extras: { depositRef: 'xyz' } })).toThrow(/deposit/);
+  });
+});

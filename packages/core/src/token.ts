@@ -9,14 +9,17 @@
  *
  * payload (version 1):
  *   u8   version (=1)
- *   u8   kind              1=ticket 2=room 3=stamp
- *   u8   flags             bit0: DLEQ present
+ *   u8   kind              1=ticket 2=room 3=stamp 4=vote
+ *   u8   flags             bit0: DLEQ, bit1: stamp B_, bit2: vote B_, bit3: deposit ref
  *   u8   eventId length L  (0..64; 0 for host-scoped tokens such as stamps)
  *   L    eventId           UTF-8
  *   8    keysetId
  *   32   secret
  *   33   C                 compressed point
  *   [32  dleq.e, 32 dleq.s, 32 dleq.r]   if bit0
+ *   [33  stamp blinded message B_]       if bit1  (door QR only, docs/SPEC.md §4 御朱印)
+ *   [33  vote credential blinded B_]     if bit2  (door QR only, anonymous polls / draws)
+ *   [16  deposit refund reference]       if bit3  (door QR only, hold-invoice deposit)
  * checksum: first 4 bytes of SHA-256(payload) — catches typos in hand-copied backups.
  *
  * This is intentionally not a `cashuB` token: Kamen tokens carry no monetary value and must not be
@@ -38,11 +41,27 @@ const SCALAR_BYTES = 32;
 const CHECKSUM_BYTES = 4;
 const HEADER_BYTES = 4;
 const FLAG_DLEQ = 0x01;
+const FLAG_STAMP = 0x02;
+const FLAG_VOTE = 0x04;
+const FLAG_DEPOSIT = 0x08;
+const KNOWN_FLAGS = FLAG_DLEQ | FLAG_STAMP | FLAG_VOTE | FLAG_DEPOSIT;
+export const DEPOSIT_REF_BYTES = 16;
+
+/**
+ * Values the participant hands over at the door together with the ticket. The blinded messages
+ * are signed at check-in (stamp, vote credential); the deposit reference triggers the refund.
+ */
+export interface CheckinExtras {
+  stampB_?: string;
+  voteB_?: string;
+  depositRef?: string;
+}
 
 export interface Token extends Proof {
   kind: KeysetKind;
   /** Event the token belongs to. Empty string for host-scoped tokens (stamps). */
   eventId: string;
+  extras?: CheckinExtras;
 }
 
 export class InvalidTokenError extends Error {
@@ -78,6 +97,19 @@ function validate(token: Token): void {
   } catch {
     throw new InvalidTokenError('invalid C');
   }
+  const ex = token.extras;
+  for (const b of [ex?.stampB_, ex?.voteB_]) {
+    if (b === undefined) continue;
+    try {
+      pointFromHex(b);
+      if (b.length !== POINT_BYTES * 2) throw new Error();
+    } catch {
+      throw new InvalidTokenError('invalid extras');
+    }
+  }
+  if (ex?.depositRef !== undefined && !isHex(ex.depositRef, DEPOSIT_REF_BYTES)) {
+    throw new InvalidTokenError('invalid deposit ref');
+  }
   if (token.dleq) {
     const { e, s, r } = token.dleq;
     if (!isHex(e, SCALAR_BYTES) || !isHex(s, SCALAR_BYTES)) {
@@ -100,7 +132,10 @@ export function encodeToken(token: Token): string {
     Uint8Array.of(
       TOKEN_VERSION,
       kindToByte(token.kind),
-      token.dleq ? FLAG_DLEQ : 0,
+      (token.dleq ? FLAG_DLEQ : 0) |
+        (token.extras?.stampB_ ? FLAG_STAMP : 0) |
+        (token.extras?.voteB_ ? FLAG_VOTE : 0) |
+        (token.extras?.depositRef ? FLAG_DEPOSIT : 0),
       eventId.length,
     ),
     eventId,
@@ -111,6 +146,9 @@ export function encodeToken(token: Token): string {
   if (token.dleq) {
     parts.push(hexToBytes(token.dleq.e), hexToBytes(token.dleq.s), hexToBytes(token.dleq.r));
   }
+  if (token.extras?.stampB_) parts.push(hexToBytes(token.extras.stampB_));
+  if (token.extras?.voteB_) parts.push(hexToBytes(token.extras.voteB_));
+  if (token.extras?.depositRef) parts.push(hexToBytes(token.extras.depositRef));
   const payload = concat(parts);
   return TOKEN_PREFIX + base32nopad.encode(concat([payload, checksum(payload)]));
 }
@@ -136,7 +174,7 @@ export function decodeToken(text: string): Token {
   const flags = payload[2] as number;
   const eventIdLen = payload[3] as number;
   if (version !== TOKEN_VERSION) throw new InvalidTokenError(`unsupported version: ${version}`);
-  if ((flags & ~FLAG_DLEQ) !== 0) throw new InvalidTokenError('unknown flags');
+  if ((flags & ~KNOWN_FLAGS) !== 0) throw new InvalidTokenError('unknown flags');
   if (eventIdLen > MAX_EVENT_ID_BYTES) throw new InvalidTokenError('eventId too long');
   const hasDleq = (flags & FLAG_DLEQ) !== 0;
 
@@ -146,7 +184,10 @@ export function decodeToken(text: string): Token {
     KEYSET_ID_BYTES +
     SECRET_BYTES +
     POINT_BYTES +
-    (hasDleq ? SCALAR_BYTES * 3 : 0);
+    (hasDleq ? SCALAR_BYTES * 3 : 0) +
+    (flags & FLAG_STAMP ? POINT_BYTES : 0) +
+    (flags & FLAG_VOTE ? POINT_BYTES : 0) +
+    (flags & FLAG_DEPOSIT ? DEPOSIT_REF_BYTES : 0);
   if (payload.length !== expected) throw new InvalidTokenError('unexpected length');
 
   let off = HEADER_BYTES;
@@ -173,6 +214,11 @@ export function decodeToken(text: string): Token {
       r: bytesToHex(take(SCALAR_BYTES)),
     };
   }
+  const extras: CheckinExtras = {};
+  if (flags & FLAG_STAMP) extras.stampB_ = bytesToHex(take(POINT_BYTES));
+  if (flags & FLAG_VOTE) extras.voteB_ = bytesToHex(take(POINT_BYTES));
+  if (flags & FLAG_DEPOSIT) extras.depositRef = bytesToHex(take(DEPOSIT_REF_BYTES));
+  if (Object.keys(extras).length > 0) token.extras = extras;
   validate(token);
   return token;
 }
@@ -207,8 +253,10 @@ export interface QrPolicy {
  *
  * Backups use plain `encodeToken()` and keep the DLEQ: they never leave the participant.
  */
-export function encodeQrToken(token: Token, policy: QrPolicy): string {
-  if (policy.offlineCheckin || !token.dleq) return encodeToken(token);
-  const { dleq: _dleq, ...withoutDleq } = token;
-  return encodeToken(withoutDleq);
+export function encodeQrToken(token: Token, policy: QrPolicy, extras?: CheckinExtras): string {
+  const { dleq, extras: _stored, ...rest } = token;
+  const out: Token = { ...rest };
+  if (dleq && policy.offlineCheckin) out.dleq = dleq;
+  if (extras && Object.values(extras).some(Boolean)) out.extras = extras;
+  return encodeToken(out);
 }

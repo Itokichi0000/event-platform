@@ -6,8 +6,9 @@ import { assertHex, bytesToHex, hexToBytes, isHex, pointFromHex } from './hex.js
  * ticket: one entry to one event (per event)
  * room:   one pass into the event's Marmot room (per event)
  * stamp:  attendance stamp (per host; does not reveal which event)
+ * vote:   check-in credential for anonymous polls, questions and draws (per event)
  */
-export const KEYSET_KINDS = ['ticket', 'room', 'stamp'] as const;
+export const KEYSET_KINDS = ['ticket', 'room', 'stamp', 'vote'] as const;
 export type KeysetKind = (typeof KEYSET_KINDS)[number];
 
 /** Every token has the same, single denomination. Tokens never represent sats. */
