@@ -1,4 +1,4 @@
-import { ChevronRight, MapPin, RotateCcw, Ticket } from 'lucide-react';
+import { ChevronRight, MapPin, RotateCcw, Stamp, Ticket } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { DateBadge } from '@/components/EventCover';
@@ -21,12 +21,20 @@ export function MyTickets() {
     <Layout>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">{t.app.myTickets}</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/tickets/restore">
-            <RotateCcw />
-            {t.ticket.restore}
-          </Link>
-        </Button>
+        <div className="flex flex-wrap justify-end gap-1">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/stamps">
+              <Stamp />
+              {t.stamps.title}
+            </Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/tickets/restore">
+              <RotateCcw />
+              {t.ticket.restore}
+            </Link>
+          </Button>
+        </div>
       </div>
       {params.get('returned') === '1' && (
         <Alert variant="success" className="mb-4">

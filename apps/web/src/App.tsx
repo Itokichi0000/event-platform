@@ -7,6 +7,7 @@ import { EventPage } from '@/pages/EventPage';
 import { Home } from '@/pages/Home';
 import { MyTickets } from '@/pages/MyTickets';
 import { RestorePage } from '@/pages/RestorePage';
+import { StampsPage } from '@/pages/StampsPage';
 import { TicketPage } from '@/pages/TicketPage';
 
 // Host and scanner screens are split out: participants never download them.
@@ -38,6 +39,7 @@ export function App() {
           <Route path="/e/:id" element={<EventPage />} />
           <Route path="/tickets" element={<MyTickets />} />
           <Route path="/tickets/restore" element={<RestorePage />} />
+          <Route path="/stamps" element={<StampsPage />} />
           <Route path="/t/:id" element={<TicketPage />} />
           <Route path="/host" element={<HostHome />} />
           <Route path="/host/new" element={<EventFormPage />} />

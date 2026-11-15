@@ -3,7 +3,7 @@
  * from the participant's tickets. Holds the event's public key, the spent identifiers Y this
  * device knows about, check-ins not yet sent to the server, and conflicts found while syncing.
  */
-import type { PublicKeyset, RedeemPayload } from '@kamen/core';
+import type { CheckinExtras, PublicKeyset, RedeemPayload } from '@kamen/core';
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 export interface CachedEvent {
@@ -21,7 +21,7 @@ export interface QueuedCheckin {
   id?: number;
   eventId: string;
   y: string;
-  payload: RedeemPayload;
+  payload: RedeemPayload & CheckinExtras;
   scannedAt: number;
 }
 

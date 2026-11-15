@@ -94,11 +94,12 @@ export class InMemoryAdapter implements MessagingAdapter {
     return { roomId: welcome.content, relays: room.relays };
   }
 
-  async send(roomId: string, content: string): Promise<void> {
+  async send(roomId: string, content: string, kind = 9): Promise<void> {
     const room = this.#room(roomId);
     if (room.disbanded || !room.members.has(this.pubkey)) throw new Error('cannot send');
     const msg: RoomMessage = {
       id: this.hub.nextId('msg'),
+      kind,
       sender: this.pubkey,
       content,
       createdAt: Date.now(),

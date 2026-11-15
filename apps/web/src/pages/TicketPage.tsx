@@ -7,6 +7,7 @@ import {
   Smartphone,
   Sun,
   Trash2,
+  Stamp,
   Undo2,
   VenetianMask,
 } from 'lucide-react';
@@ -22,7 +23,15 @@ import { t } from '@/i18n';
 import { deleteTicket, getTicket, updateTicket, type StoredTicket } from '@/lib/db';
 import { formatDate, formatRange } from '@/lib/format';
 import { checkStorage, type StorageStatus } from '@/lib/storage';
-import { backupTextFor, qrTextFor, refreshTicket, returnTicket } from '@/lib/tickets';
+import {
+  backupTextFor,
+  ensureCheckin,
+  pickupCheckin,
+  qrTextFor,
+  refreshTicket,
+  returnTicket,
+} from '@/lib/tickets';
+import { AttendeePanel } from '@/components/AttendeePanel';
 import { useInstallPrompt } from '@/lib/install';
 
 export function TicketPage() {
@@ -36,6 +45,7 @@ export function TicketPage() {
   const install = useInstallPrompt();
 
   const [returning, setReturning] = useState(false);
+  const [stampToast, setStampToast] = useState(false);
   const [roomOpen, setRoomOpen] = useState<boolean | null>(null);
   const [roomAvailable, setRoomAvailable] = useState(false);
   const [returnError, setReturnError] = useState(false);
@@ -49,7 +59,8 @@ export function TicketPage() {
         // Online: pick up cancellation, venue changes and the offline check-in setting.
         const fresh = tk ? await refreshTicket(tk) : null;
         if (alive && fresh) {
-          setTicket(fresh.ticket);
+          // Prepare the blinded stamp / vote credential for the door QR (older tickets).
+          setTicket(await ensureCheckin(fresh.ticket, fresh.event));
           setRoomAvailable(fresh.event.roomAvailable);
         }
       },
@@ -70,6 +81,24 @@ export function TicketPage() {
       alive = false;
     };
   }, [id]);
+
+  // After check-in, pick up the stamp (御朱印) and vote credential signed by the scanner.
+  const pendingCheckin = !!(ticket && (ticket.checkin?.stamp || ticket.checkin?.vote));
+  useEffect(() => {
+    if (!ticket || !pendingCheckin) return;
+    let alive = true;
+    const tick = async () => {
+      const r = await pickupCheckin(ticket).catch(() => null);
+      if (!alive || !r) return;
+      if (r.ticket !== ticket) setTicket(r.ticket);
+      if (r.stamp) setStampToast(true);
+    };
+    const h = setInterval(() => void tick(), 3000);
+    return () => {
+      alive = false;
+      clearInterval(h);
+    };
+  }, [ticket, pendingCheckin]);
 
   if (ticket === undefined) {
     return (
@@ -239,6 +268,27 @@ export function TicketPage() {
           </CardContent>
         </Card>
       )}
+
+      {stampToast && (
+        <Card className="mt-4 border-destructive/40 bg-destructive/5" data-testid="stamp-received">
+          <CardContent className="flex items-center gap-3 pt-5">
+            <Stamp className="size-8 shrink-0 text-destructive" />
+            <div className="flex-1">
+              <p className="font-semibold">{t.ticket.stampReceived}</p>
+              <p className="text-xs text-muted-foreground">{t.ticket.stampReceivedBody}</p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/stamps">{t.ticket.openStamps}</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {tk.depositId && (
+        <p className="mt-4 text-center text-xs text-muted-foreground">{t.ticket.depositRefund}</p>
+      )}
+
+      <AttendeePanel ticket={tk} onTicket={setTicket} />
 
       {returnable && (
         <Card className="mt-4">

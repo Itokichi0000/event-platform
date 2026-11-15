@@ -22,18 +22,25 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { formatSats, t } from '@/i18n';
-import { api, ApiError, NetworkError, type PublicEvent } from '@/lib/api';
+import { api, ApiError, NetworkError, type Application, type PublicEvent } from '@/lib/api';
 import {
+  applicationStore,
+  depositStore,
   pendingQuotesForEvent,
   ticketsForEvent,
+  type PendingDeposit,
   type PendingQuote,
+  type StoredApplication,
   type StoredTicket,
 } from '@/lib/db';
 import { formatDate, formatDateTime, formatRange } from '@/lib/format';
-import { shortNpub } from '@/lib/nostr';
+import { hasNip07, shortNpub } from '@/lib/nostr';
 import {
   acquireTicket,
+  applyToEvent,
+  claimApprovedTicket,
   claimPaidTicket,
+  startDeposit,
   dropQuote,
   quoteState,
   startPurchase,
@@ -62,6 +69,12 @@ export function EventPage() {
   const [quote, setQuote] = useState<PendingQuote | null>(null);
   const [payPhase, setPayPhase] = useState<PaymentPhase>('waiting');
   const claiming = useRef(false);
+  const [application, setApplication] = useState<StoredApplication | null>(null);
+  const [appState, setAppState] = useState<Application['state'] | null>(null);
+  const [deposit, setDeposit] = useState<PendingDeposit | null>(null);
+  const [depositPhase, setDepositPhase] = useState<PaymentPhase>('waiting');
+  const depositHeld = useRef(false);
+  const joinRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     let alive = true;
@@ -74,6 +87,14 @@ export function EventPage() {
       );
     ticketsForEvent(id).then(
       (ts) => alive && setHeld(ts[0] ?? null),
+      () => {},
+    );
+    applicationStore.get(id).then(
+      (a) => alive && a && setApplication(a),
+      () => {},
+    );
+    depositStore.get(id).then(
+      (d) => alive && d && setDeposit(d),
       () => {},
     );
     // Resume a payment started earlier on this device.
@@ -132,6 +153,50 @@ export function EventPage() {
     };
   }, [quote, load, navigate, fail]);
 
+  // Approval status of this device's application.
+  useEffect(() => {
+    if (!application) return;
+    let alive = true;
+    const tick = () =>
+      api.applicationStatus(application.eventId, application.id, application.token).then(
+        (r) => alive && setAppState(r.state),
+        () => {},
+      );
+    void tick();
+    const h = setInterval(() => void tick(), 5000);
+    return () => {
+      alive = false;
+      clearInterval(h);
+    };
+  }, [application]);
+
+  // Deposit (hold invoice): once the payment is held, continue to the ticket automatically.
+  useEffect(() => {
+    if (!deposit) return;
+    let alive = true;
+    const tick = async () => {
+      if (depositHeld.current) return;
+      try {
+        const { state } = await api.depositStatus(deposit.eventId, deposit.depositId);
+        if (!alive) return;
+        if (state === 'expired') return setDepositPhase('expired');
+        if (state === 'held') {
+          depositHeld.current = true;
+          setDepositPhase('paid');
+          await joinRef.current();
+        }
+      } catch {
+        /* retry on next tick */
+      }
+    };
+    void tick();
+    const h = setInterval(() => void tick(), POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(h);
+    };
+  }, [deposit]);
+
   if (load.state === 'loading') {
     return (
       <Layout>
@@ -158,11 +223,41 @@ export function EventPage() {
   const soldOut = ev.remaining <= 0;
   const paid = ev.issuePolicy === 'paid';
   const blocked = ev.status !== 'published' || ended || soldOut || (paid && !ev.paymentsReady);
-  const canJoin = !blocked && !held && !(ev.issuePolicy === 'invite' && !invite.trim());
+  const approval = ev.issuePolicy === 'approval';
+  const waitingApproval = approval && !!application && appState !== 'approved';
+  const canJoin =
+    !blocked && !held && !(ev.issuePolicy === 'invite' && !invite.trim()) && !waitingApproval;
+
+  const onStage = (s: AcquireStage, p?: number) =>
+    setStage({ stage: s, ...(p === undefined ? {} : { progress: p }) });
 
   async function join() {
     setError(null);
     try {
+      if (approval && !application) {
+        if (!hasNip07()) return setError(t.event.approval.needExtension);
+        const a = await applyToEvent(ev);
+        setApplication(a);
+        setAppState('pending');
+        return;
+      }
+      if (approval && appState !== 'approved') return;
+      if (ev.depositMsat > 0 && !depositHeld.current) {
+        if (!deposit) {
+          setStage({ stage: 'invoice' });
+          const d = await startDeposit(ev);
+          setStage(null);
+          setDepositPhase('waiting');
+          setDeposit(d);
+        }
+        return;
+      }
+      const depositId = ev.depositMsat > 0 ? deposit?.depositId : undefined;
+      if (approval && application) {
+        const ticket = await claimApprovedTicket(ev, application, onStage, depositId);
+        navigate(`/t/${ticket.id}?new=1`);
+        return;
+      }
       if (paid) {
         setStage({ stage: 'invoice' });
         const q = await startPurchase(ev);
@@ -171,15 +266,23 @@ export function EventPage() {
         setQuote(q);
         return;
       }
-      const ticket = await acquireTicket(
-        ev,
-        (s, p) => setStage({ stage: s, ...(p === undefined ? {} : { progress: p }) }),
-        ev.issuePolicy === 'invite' ? { invite: invite.trim() } : {},
-      );
+      const ticket = await acquireTicket(ev, onStage, {
+        ...(ev.issuePolicy === 'invite' ? { invite: invite.trim() } : {}),
+        ...(depositId ? { depositId } : {}),
+      });
       navigate(`/t/${ticket.id}?new=1`);
     } catch (e) {
       fail(e, ev);
     }
+  }
+
+  joinRef.current = join;
+
+  async function retryDeposit() {
+    await depositStore.delete(ev.id);
+    depositHeld.current = false;
+    setDeposit(null);
+    await join();
   }
 
   async function retryPayment() {
@@ -199,9 +302,17 @@ export function EventPage() {
           ? ev.paymentsReady
             ? t.event.joinPaid(formatSats(ev.priceMsat))
             : t.event.paymentsNotReady
-          : ev.issuePolicy === 'invite'
-            ? t.event.joinInvite
-            : t.event.joinFree;
+          : approval
+            ? !application
+              ? t.event.joinApproval
+              : appState === 'approved'
+                ? t.event.approval.claim
+                : appState === 'rejected'
+                  ? t.event.approval.rejected
+                  : t.event.approval.pending
+            : ev.issuePolicy === 'invite'
+              ? t.event.joinInvite
+              : t.event.joinFree;
 
   return (
     <Layout className="pb-40">
@@ -269,6 +380,20 @@ export function EventPage() {
         </div>
       </div>
 
+      {deposit && !held && (
+        <section className="mt-8">
+          <PaymentPanel
+            quote={deposit}
+            phase={depositPhase}
+            onRetry={retryDeposit}
+            title={t.event.deposit.title}
+            notes={[t.event.deposit.privacy]}
+            paidText={t.event.deposit.held}
+            testId="deposit-panel"
+          />
+        </section>
+      )}
+
       {quote && !held && (
         <section className="mt-8">
           <PaymentPanel quote={quote} phase={payPhase} onRetry={retryPayment} />
@@ -322,6 +447,17 @@ export function EventPage() {
             </ul>
             {ev.issuePolicy === 'invite' && <p className="mt-3 text-sm">{t.event.privacyInvite}</p>}
             {paid && <p className="mt-3 text-sm">{t.event.privacyPaid}</p>}
+            {approval && (
+              <p className="mt-3 text-sm text-warning" data-testid="approval-notice">
+                {t.event.approval.body}
+              </p>
+            )}
+            {ev.depositMsat > 0 && (
+              <p className="mt-3 text-sm text-warning" data-testid="deposit-notice">
+                {t.event.deposit.body(formatSats(ev.depositMsat))} {t.event.deposit.privacy}
+              </p>
+            )}
+            {ev.minStamps > 0 && <p className="mt-3 text-sm">{t.event.regulars(ev.minStamps)}</p>}
             {ev.offlineCheckin && (
               <p className="mt-3 text-sm text-warning" data-testid="offline-notice">
                 {t.event.privacyOffline}
@@ -359,7 +495,7 @@ export function EventPage() {
                 />
               </div>
             </div>
-          ) : quote ? null : (
+          ) : quote || (deposit && depositPhase !== 'expired') ? null : (
             <>
               {ev.issuePolicy === 'invite' && !blocked && (
                 <Input

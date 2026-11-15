@@ -14,8 +14,13 @@ export interface SignedEvent {
   sig: string;
 }
 
+/** Chat message kind (NIP-C7 style kind 9). Apps may define others (e.g. mutual reveal). */
+export const CHAT_KIND = 9;
+
 export interface RoomMessage {
   id: string;
+  /** Application kind of the rumor inside MLS (9 = chat). */
+  kind: number;
   /** Hex pubkey of the sender's per-event key (or the room agent). */
   sender: string;
   content: string;
@@ -55,7 +60,8 @@ export interface MessagingAdapter {
   addMember(roomId: string, keyPackages: SignedEvent[]): Promise<Welcome[]>;
   /** Participant: join from a Welcome addressed to this identity. */
   join(welcome: SignedEvent): Promise<RoomInfo>;
-  send(roomId: string, content: string): Promise<void>;
+  /** Send an application message (default kind 9 = chat). */
+  send(roomId: string, content: string, kind?: number): Promise<void>;
   /** Start receiving (backlog + live). Returns an unsubscribe function. */
   subscribe(roomId: string, handlers: RoomHandlers): Promise<() => void>;
   status(roomId: string): Promise<RoomStatus | null>;

@@ -150,6 +150,7 @@ describe('local cleanup', () => {
     const record = await joinRoom(t, event(), factory);
     await roomStore.addMessage({
       id: 'm1',
+      kind: 9,
       sender: 'x',
       content: 'hi',
       createdAt: 1,
@@ -179,5 +180,78 @@ describe('masks', () => {
     expect(maskName(a, 'en')).not.toBe(maskName(b, 'en'));
     expect(maskSpec(a)).toEqual(maskSpec(a));
     expect(maskName(a, 'en')).toMatch(/^[A-Z][a-z]+ [A-Za-z ]+ #\d{1,3}$/);
+  });
+});
+
+describe('mutual reveal', () => {
+  it('reveals npubs only when both liked each other; likes stay hidden otherwise', async () => {
+    const { generateSecretKey, getPublicKey } = await import('nostr-tools/pure');
+    const { npubEncode } = await import('nostr-tools/nip19');
+    const { bytesToHex } = await import('@kamen/core');
+    const { like, handleReveal, openReveal, sealReveal, REVEAL_KIND } =
+      await import('../src/rooms/reveal');
+    const mk = (eventId: string) => {
+      const sk = generateSecretKey();
+      return {
+        eventId,
+        roomId: roomId,
+        secretKey: bytesToHex(sk),
+        pubkey: getPublicKey(sk),
+        agentPubkey: agent.pubkey,
+        relays: [],
+        eventTitle: 't',
+        eventEndsAt: Date.now() + 1e6,
+        joinedAt: 0,
+      };
+    };
+    // Two participants and an eavesdropping third member, each with their own store namespace.
+    const a = mk('ev-a');
+    const b = mk('ev-b');
+    const c = mk('ev-c');
+    const sent: { from: string; content: string; kind: number }[] = [];
+    const adapterFor = (me: typeof a) =>
+      ({
+        send: async (_r: string, content: string, kind: number) =>
+          void sent.push({ from: me.pubkey, content, kind }),
+      }) as never;
+    const deliver = async (to: typeof a) => {
+      let last = null;
+      for (const m of sent.splice(0)) {
+        last = await handleReveal(adapterFor(to), to as never, {
+          id: Math.random().toString(),
+          kind: m.kind,
+          sender: m.from,
+          content: m.content,
+          createdAt: 0,
+        });
+      }
+      return last;
+    };
+    const npubA = npubEncode(getPublicKey(generateSecretKey()));
+    const npubB = npubEncode(getPublicKey(generateSecretKey()));
+
+    await like(adapterFor(a), a as never, b.pubkey, npubA);
+    const likeMsg = sent[0]!;
+    expect(likeMsg.kind).toBe(REVEAL_KIND);
+    // the third member cannot read it; B can, but nothing is revealed yet
+    expect(openReveal(c.secretKey, a.pubkey, likeMsg.content)).toBeNull();
+    const stB = await deliver(b);
+    expect(stB).toMatchObject({ theyLiked: true, iLiked: false });
+    expect(stB?.theirNpub).toBeUndefined();
+
+    // B likes A back: B immediately sends its reveal; A answers with its own.
+    await like(adapterFor(b), b as never, a.pubkey, npubB);
+    const stA = await deliver(a); // like + reveal from B
+    expect(stA).toMatchObject({
+      iLiked: true,
+      theyLiked: true,
+      theirNpub: npubB,
+      revealSent: true,
+    });
+    const stB2 = await deliver(b); // A's reveal
+    expect(stB2).toMatchObject({ theirNpub: npubA });
+    expect(sealReveal(a.secretKey, b.pubkey, { t: 'like' })).not.toBe(
+      sealReveal(a.secretKey, b.pubkey, { t: 'like' }),
+    );
   });
 });

@@ -14,10 +14,18 @@ export function PaymentPanel({
   quote,
   phase,
   onRetry,
+  title = t.event.pay.title,
+  notes = [t.event.pay.noRefund],
+  paidText = t.event.pay.paid,
+  testId = 'payment-panel',
 }: {
-  quote: PendingQuote;
+  quote: Pick<PendingQuote, 'invoice' | 'amountMsat' | 'expiresAt'>;
   phase: PaymentPhase;
   onRetry: () => void;
+  title?: string;
+  notes?: readonly string[];
+  paidText?: string;
+  testId?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -29,11 +37,11 @@ export function PaymentPanel({
   const uri = `lightning:${quote.invoice}`;
 
   return (
-    <Card className="border-primary/40" data-testid="payment-panel">
+    <Card className="border-primary/40" data-testid={testId}>
       <CardContent className="flex flex-col items-center gap-3 pt-5 text-center">
         <h2 className="flex items-center gap-2 font-semibold">
           <Zap className="size-5 text-primary" />
-          {t.event.pay.title} · {formatSats(quote.amountMsat)}
+          {title} · {formatSats(quote.amountMsat)}
         </h2>
         {phase === 'expired' ? (
           <>
@@ -76,13 +84,17 @@ export function PaymentPanel({
               data-testid="payment-status"
             >
               <Spinner />
-              {phase === 'paid' ? t.event.pay.paid : t.event.pay.waiting}
+              {phase === 'paid' ? paidText : t.event.pay.waiting}
             </p>
             {phase === 'waiting' && (
               <p className="text-xs text-muted-foreground">{t.event.pay.expiresIn(minutes)}</p>
             )}
             <p className="text-xs text-muted-foreground">{t.event.pay.keepOpen}</p>
-            <p className="text-xs text-muted-foreground">{t.event.pay.noRefund}</p>
+            {notes.map((n) => (
+              <p key={n} className="text-xs text-muted-foreground">
+                {n}
+              </p>
+            ))}
           </>
         )}
       </CardContent>

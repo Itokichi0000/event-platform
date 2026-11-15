@@ -130,10 +130,10 @@ export class MarmotAdapter implements MessagingAdapter {
     throw new Error('no joinable welcome');
   }
 
-  async send(roomId: string, content: string): Promise<void> {
+  async send(roomId: string, content: string, kind = CHAT_KIND): Promise<void> {
     const rumor = {
       id: '',
-      kind: CHAT_KIND,
+      kind,
       pubkey: this.pubkey,
       created_at: Math.floor(Date.now() / 1000),
       tags: [] as string[][],
@@ -154,9 +154,10 @@ export class MarmotAdapter implements MessagingAdapter {
           created_at: number;
           kind: number;
         };
-        if (rumor.kind !== CHAT_KIND) return;
+        if (!Number.isInteger(rumor.kind)) return;
         const msg: RoomMessage = {
           id: rumor.id,
+          kind: rumor.kind,
           sender: rumor.pubkey,
           content: rumor.content,
           createdAt: rumor.created_at * 1000,

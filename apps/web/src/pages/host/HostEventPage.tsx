@@ -27,6 +27,7 @@ import { formatDate, formatRange, formatTime } from '@/lib/format';
 import { hostJson, hostRequest } from '@/lib/nostr';
 import { HostBar, HostGate } from './HostGate';
 import { CohostsCard, InviteCodesCard, WalletCard } from './OwnerSettings';
+import { ApplicationsCard, DrawsCard, PollsCard, QuestionsCard } from './EventFeatures';
 import { statusBadge } from './HostHome';
 
 const POLL_MS = 4000;
@@ -162,6 +163,11 @@ function Manage({ session }: { session: Parameters<typeof HostBar>[0]['session']
 
           <Announcements eventId={ev.id} items={ev.announcements} onChange={reload} />
 
+          {ev.issuePolicy === 'approval' && <ApplicationsCard eventId={ev.id} />}
+          <PollsCard eventId={ev.id} />
+          <QuestionsCard eventId={ev.id} />
+          <DrawsCard eventId={ev.id} />
+
           <p className="text-xs text-muted-foreground">{t.host.manage.notHeld}</p>
 
           {ev.role === 'owner' &&
@@ -201,7 +207,9 @@ function Manage({ session }: { session: Parameters<typeof HostBar>[0]['session']
           <ScannerLinks eventId={ev.id} links={links} onChange={reload} />
           {ev.role === 'owner' ? (
             <>
-              {ev.issuePolicy === 'paid' && <WalletCard ev={ev} onChange={reload} />}
+              {(ev.issuePolicy === 'paid' || ev.depositMsat > 0) && (
+                <WalletCard ev={ev} onChange={reload} />
+              )}
               {ev.issuePolicy === 'invite' && <InviteCodesCard eventId={ev.id} />}
               <CohostsCard eventId={ev.id} />
             </>

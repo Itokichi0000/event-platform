@@ -24,6 +24,17 @@ export interface StoredMessage extends RoomMessage {
   eventId: string;
 }
 
+/** Mutual-reveal state with one other participant (never shown unless both sides chose). */
+export interface RevealState {
+  eventId: string;
+  peer: string;
+  iLiked: boolean;
+  myNpub?: string;
+  theyLiked: boolean;
+  theirNpub?: string;
+  revealSent: boolean;
+}
+
 interface RoomsDB extends DBSchema {
   rooms: { key: string; value: RoomRecord };
   kv: {
@@ -31,20 +42,29 @@ interface RoomsDB extends DBSchema {
     value: { eventId: string; ns: string; key: string; value: unknown };
   };
   messages: { key: [string, string]; value: StoredMessage; indexes: { byEvent: string } };
+  reveals: { key: [string, string]; value: RevealState; indexes: { byEvent: string } };
 }
 
 const NAME = 'kamen-rooms';
 let promise: Promise<IDBPDatabase<RoomsDB>> | null = null;
 
 function rdb() {
-  promise ??= openDB<RoomsDB>(NAME, 1, {
-    upgrade(d) {
-      d.createObjectStore('rooms', { keyPath: 'eventId' });
-      d.createObjectStore('kv', { keyPath: ['eventId', 'ns', 'key'] });
-      d.createObjectStore('messages', { keyPath: ['eventId', 'id'] }).createIndex(
-        'byEvent',
-        'eventId',
-      );
+  promise ??= openDB<RoomsDB>(NAME, 2, {
+    upgrade(d, oldVersion) {
+      if (oldVersion < 1) {
+        d.createObjectStore('rooms', { keyPath: 'eventId' });
+        d.createObjectStore('kv', { keyPath: ['eventId', 'ns', 'key'] });
+        d.createObjectStore('messages', { keyPath: ['eventId', 'id'] }).createIndex(
+          'byEvent',
+          'eventId',
+        );
+      }
+      if (oldVersion < 2) {
+        d.createObjectStore('reveals', { keyPath: ['eventId', 'peer'] }).createIndex(
+          'byEvent',
+          'eventId',
+        );
+      }
     },
   });
   return promise;
@@ -76,15 +96,20 @@ export const roomStore = {
   /** Delete everything stored for an event's room. */
   async purge(eventId: string) {
     const d = await rdb();
-    const tx = d.transaction(['rooms', 'kv', 'messages'], 'readwrite');
+    const tx = d.transaction(['rooms', 'kv', 'messages', 'reveals'], 'readwrite');
     const range = IDBKeyRange.bound([eventId], [eventId, []]);
     await Promise.all([
       tx.objectStore('rooms').delete(eventId),
       tx.objectStore('kv').delete(range),
       tx.objectStore('messages').delete(range),
+      tx.objectStore('reveals').delete(range),
       tx.done,
     ]);
   },
+
+  reveal: async (eventId: string, peer: string) => (await rdb()).get('reveals', [eventId, peer]),
+  reveals: async (eventId: string) => (await rdb()).getAllFromIndex('reveals', 'byEvent', eventId),
+  saveReveal: async (r: RevealState) => void (await (await rdb()).put('reveals', r)),
 
   /** Marmot store backend scoped to one event. */
   backend(eventId: string): KeyValueBackend {

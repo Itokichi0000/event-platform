@@ -4,6 +4,7 @@ import type {
   PowChallenge,
   PublicKeyset,
   RedeemPayload,
+  CheckinExtras,
 } from '@kamen/core';
 import type { SignedEvent } from '@kamen/messaging';
 
@@ -13,7 +14,7 @@ export interface Announcement {
   createdAt: number;
 }
 
-export type IssuePolicy = 'pow' | 'invite' | 'paid';
+export type IssuePolicy = 'pow' | 'invite' | 'paid' | 'approval';
 
 export interface PublicEvent {
   id: string;
@@ -35,6 +36,12 @@ export interface PublicEvent {
   /** A room pass can be issued / the room can be entered right now. */
   roomAvailable: boolean;
   roomRelays: string[];
+  /** Hold-invoice deposit (0 = none), refunded at check-in. */
+  depositMsat: number;
+  /** Stamps of this host required to get a ticket (regulars-first). */
+  minStamps: number;
+  /** The host's stamp (御朱印) public key. */
+  stampKeyset: PublicKeyset;
   keysets: PublicKeyset[];
   announcements: Announcement[];
 }
@@ -65,6 +72,42 @@ export interface EventInput {
   priceMsat: number;
   offlineCheckin: boolean;
   roomEnabled: boolean;
+  depositMsat: number;
+  minStamps: number;
+}
+
+export interface Poll {
+  id: string;
+  question: string;
+  options: string[];
+  counts: number[];
+  status: 'open' | 'closed';
+  createdAt: number;
+}
+
+export interface Question {
+  id: string;
+  body: string;
+  upvotes: number;
+  hidden?: boolean;
+  createdAt: number;
+}
+
+export interface Draw {
+  id: string;
+  title: string;
+  winners: number;
+  status: 'open' | 'drawn';
+  entries: number;
+  winningCodes: string[];
+  createdAt: number;
+}
+
+export interface Application {
+  id: string;
+  pubkey: string;
+  state: 'pending' | 'approved' | 'rejected' | 'issued';
+  createdAt: number;
 }
 
 export interface Stats {
@@ -168,22 +211,53 @@ export const api = {
       pow?: { challenge: PowChallenge; nonce: number };
       invite?: string;
       quoteId?: string;
+      approval?: { id: string; token: string };
+      depositId?: string;
+      stamps?: { proofs: RedeemPayload[]; outputs: IssueRequest[] };
       outputs: { ticket: IssueRequest; room?: IssueRequest };
     },
   ) =>
     request<{
       signatures: { ticket: IssueResponse; room?: IssueResponse };
+      stampSignatures?: IssueResponse[];
       location: string | null;
     }>(`${ev(id)}/issue`, json(body)),
   roomJoin: (id: string, pass: RedeemPayload, keyPackage: SignedEvent) =>
     request<RoomJoinResult>(`${ev(id)}/room/join`, json({ pass, keyPackage })),
-  returnTicket: (id: string, payload: RedeemPayload) =>
-    request<{ ok: true }>(`${ev(id)}/return`, json(payload)),
+  returnTicket: (id: string, payload: RedeemPayload & { depositRef?: string }) =>
+    request<{ ok: true; deposit: string | null }>(`${ev(id)}/return`, json(payload)),
+  pickupSignature: (blinded: string) =>
+    request<IssueResponse & { kind: 'stamp' | 'vote' }>(`/api/stamps/${blinded}`),
+  polls: (id: string) => request<Poll[]>(`${ev(id)}/polls`),
+  vote: (id: string, pollId: string, credential: RedeemPayload, option: number) =>
+    request<{ ok: true }>(`${ev(id)}/polls/${pollId}/vote`, json({ credential, option })),
+  questions: (id: string) => request<Question[]>(`${ev(id)}/questions`),
+  ask: (id: string, credential: RedeemPayload, body: string) =>
+    request<{ id: string }>(`${ev(id)}/questions`, json({ credential, body })),
+  upvote: (id: string, qid: string, credential: RedeemPayload) =>
+    request<{ ok: true }>(`${ev(id)}/questions/${qid}/upvote`, json({ credential })),
+  draws: (id: string) => request<Draw[]>(`${ev(id)}/draws`),
+  enterDraw: (id: string, did: string, credential: RedeemPayload) =>
+    request<{ code: string }>(`${ev(id)}/draws/${did}/enter`, json({ credential })),
+  createDeposit: (id: string) =>
+    request<{ depositId: string; invoice: string; amountMsat: number; expiresAt: number }>(
+      `${ev(id)}/deposit`,
+      { method: 'POST' },
+    ),
+  depositStatus: (id: string, did: string) =>
+    request<{
+      state: 'unpaid' | 'held' | 'issued' | 'refunded' | 'settled' | 'expired';
+      expiresAt: number;
+    }>(`${ev(id)}/deposits/${did}`),
+  applicationStatus: (id: string, aid: string, token: string) =>
+    request<{ state: Application['state'] }>(`${ev(id)}/applications/${aid}`, {
+      headers: { 'x-kamen-claim': token },
+    }),
   scannerSession: (id: string, token: string) =>
     request<ScannerSession>(`${ev(id)}/scanner-session`, bearer(token)),
   spentList: (id: string, token: string) =>
     request<{ ys: string[] }>(`${ev(id)}/spent`, bearer(token)),
-  redeem: (id: string, token: string, payload: RedeemPayload) =>
+  redeem: (id: string, token: string, payload: RedeemPayload & CheckinExtras) =>
     request<{ ok: true; redeemed: number; capacity: number; issued: number }>(`${ev(id)}/redeem`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },

@@ -30,6 +30,8 @@ function defaults(): EventInput {
     priceMsat: 0,
     offlineCheckin: false,
     roomEnabled: true,
+    depositMsat: 0,
+    minStamps: 0,
   };
 }
 
@@ -70,6 +72,8 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
           priceMsat: ev.priceMsat,
           offlineCheckin: ev.offlineCheckin,
           roomEnabled: ev.roomEnabled,
+          depositMsat: ev.depositMsat,
+          minStamps: ev.minStamps,
         }),
       () => setError(t.app.networkError),
     );
@@ -241,6 +245,7 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
                   ['pow', t.host.form.policyPow],
                   ['invite', t.host.form.policyInvite],
                   ['paid', t.host.form.policyPaid],
+                  ['approval', t.host.form.policyApproval],
                 ] as const
               ).map(([value, label]) => (
                 <label key={value} className="flex items-center gap-2">
@@ -249,7 +254,13 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
                     name="issuePolicy"
                     value={value}
                     checked={input.issuePolicy === value}
-                    onChange={() => set('issuePolicy', value)}
+                    onChange={() =>
+                      setInput({
+                        ...input,
+                        issuePolicy: value,
+                        ...(value === 'paid' ? { depositMsat: 0 } : {}),
+                      })
+                    }
                     className="accent-[var(--color-primary)]"
                   />
                   {label}
@@ -273,7 +284,37 @@ function EventFormInner({ session }: { session: Parameters<typeof HostBar>[0]['s
                 <p className="text-xs text-muted-foreground">{t.host.form.paidNote}</p>
               </div>
             )}
-            <p className="text-xs text-muted-foreground">{t.host.form.policyNote}</p>
+            {input.issuePolicy !== 'paid' && (
+              <div className="mt-2 flex flex-col gap-2">
+                <Label htmlFor="deposit">{t.host.form.deposit}</Label>
+                <Input
+                  id="deposit"
+                  type="number"
+                  min={0}
+                  value={Math.floor(input.depositMsat / 1000)}
+                  onChange={(e) =>
+                    set('depositMsat', Math.max(0, Math.floor(Number(e.target.value))) * 1000)
+                  }
+                  className="w-40"
+                />
+                <p className="text-xs text-muted-foreground">{t.host.form.depositHint}</p>
+              </div>
+            )}
+            <div className="mt-2 flex flex-col gap-2">
+              <Label htmlFor="minStamps">{t.host.form.minStamps}</Label>
+              <Input
+                id="minStamps"
+                type="number"
+                min={0}
+                max={50}
+                value={input.minStamps}
+                onChange={(e) =>
+                  set('minStamps', Math.max(0, Math.min(50, Math.floor(Number(e.target.value)))))
+                }
+                className="w-24"
+              />
+              <p className="text-xs text-muted-foreground">{t.host.form.minStampsHint}</p>
+            </div>
             <p className="mt-1 flex items-center gap-1.5 text-success">
               <ShieldCheck className="size-4 shrink-0" />
               {t.host.form.anonymity[input.issuePolicy]}

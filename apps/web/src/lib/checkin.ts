@@ -48,13 +48,16 @@ export async function checkIn(ctx: CheckinContext, text: string): Promise<Verdic
     return { kind: 'bad', reason: 'usedHere' };
   }
 
+  // Ticket without DLEQ plus the check-in extras (blinded stamp / vote credential, deposit ref).
+  const payload = { ...toRedeemPayload(ticket), ...(ticket.extras ?? {}) };
+
   const offlineAccept = async (): Promise<Verdict> => {
     if (!ctx.offlineCheckin) return { kind: 'warn', reason: 'offlineUnsupported' };
     if (!verified) return { kind: 'bad', reason: 'noDleq' };
     await scannerStore.queueCheckin({
       eventId: ctx.eventId,
       y,
-      payload: toRedeemPayload(ticket),
+      payload,
       scannedAt: Date.now(),
     });
     return { kind: 'ok', offline: true };
@@ -64,7 +67,7 @@ export async function checkIn(ctx: CheckinContext, text: string): Promise<Verdic
 
   try {
     // The DLEQ (with its blinding factor) is stripped: the server must never see it.
-    const res = await api.redeem(ctx.eventId, ctx.token, toRedeemPayload(ticket));
+    const res = await api.redeem(ctx.eventId, ctx.token, payload);
     if (ctx.offlineCheckin) await scannerStore.addSpent(ctx.eventId, [y]);
     return { kind: 'ok', offline: false, counts: { redeemed: res.redeemed, issued: res.issued } };
   } catch (e) {
