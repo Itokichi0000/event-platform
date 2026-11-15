@@ -17,10 +17,20 @@ export function watchErrors(page: Page) {
 }
 
 export interface EventOptions {
-  policy?: 'pow' | 'invite' | 'paid';
+  policy?: 'pow' | 'invite' | 'paid' | 'approval';
   priceSats?: number;
   offline?: boolean;
   capacity?: number;
+  depositSats?: number;
+  /** Start this many hours from now (deposits open only shortly before the start). */
+  startsInHours?: number;
+}
+
+/** <input type="datetime-local"> value in the browser's (= this machine's) local time. */
+function localInput(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 /** Host: log in with a fake NIP-07 signer, create and publish an event, issue a check-in link. */
@@ -43,13 +53,22 @@ export async function createEvent(browser: Browser, opts: EventOptions = {}) {
     await page.getByLabel('有料（Lightning）').check();
     await page.getByLabel('価格（sats）').fill(String(opts.priceSats ?? 21));
   }
+  if (opts.policy === 'approval')
+    await page.getByLabel('承認制（申請者の npub を確認して承認）').check();
+  if (opts.depositSats)
+    await page.getByLabel('デポジット（sats、0 でなし）').fill(String(opts.depositSats));
+  if (opts.startsInHours !== undefined) {
+    const start = Date.now() + opts.startsInHours * 3600_000;
+    await page.getByLabel('開始', { exact: true }).fill(localInput(start));
+    await page.getByLabel('終了', { exact: true }).fill(localInput(start + 3 * 3600_000));
+  }
   if (opts.offline) await page.getByLabel('オフライン受付を使う').check();
   await page.getByRole('button', { name: '作成する（下書き）' }).click();
 
   await expect(page).toHaveURL(/\/host\/e\/[a-z2-7]{12}$/);
   const eventId = page.url().split('/').pop()!;
 
-  if (opts.policy === 'paid') {
+  if (opts.policy === 'paid' || opts.depositSats) {
     await page.getByLabel('ウォレット（NWC）').fill(MOCK_NWC);
     await page.getByRole('button', { name: '接続', exact: true }).click();
     await expect(page.getByTestId('wallet-connected')).toBeVisible();
@@ -65,8 +84,9 @@ export async function createEvent(browser: Browser, opts: EventOptions = {}) {
   return { host: page, eventId, scannerUrl, signer };
 }
 
-export async function participant(browser: Browser) {
+export async function participant(browser: Browser, opts: { nostr?: boolean } = {}) {
   const context = await browser.newContext({ ...devices['Pixel 7'] });
+  if (opts.nostr) await installNostrSigner(context);
   const page = await context.newPage();
   watchErrors(page);
   return page;
