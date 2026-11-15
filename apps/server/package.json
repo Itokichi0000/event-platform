@@ -1,0 +1,35 @@
+{
+  "name": "@kamen/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start:prod": "node dist/main.mjs",
+    "agent": "tsx src/agent/main.ts",
+    "agent:dev": "tsx watch src/agent/main.ts",
+    "start:agent": "node dist/agent.mjs"
+  },
+  "dependencies": {
+    "@getalby/sdk": "9.0.0",
+    "@hono/node-server": "2.1.8",
+    "@kamen/core": "workspace:*",
+    "@kamen/messaging": "workspace:*",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "better-sqlite3": "13.2.0",
+    "drizzle-orm": "0.45.4",
+    "hono": "4.13.18",
+    "nostr-tools": "2.26.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15"
+  }
+}

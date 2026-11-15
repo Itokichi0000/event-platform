@@ -4,7 +4,9 @@
 仕様の正本は docs/SPEC.md。実装前に必ず該当章を読むこと。仕様と矛盾する判断が必要なときは、実装せずに質問する。
 
 ## 絶対に守るルール（プライバシー）
+
 - 参加者のメール・氏名・電話番号・npubを収集するコードを書かない。任意項目としても追加しない。
+  - 唯一の例外：承認制のイベントの申請者npub（docs/SPEC.md 2章・7章、2026-11-15承認）。承認制のイベントにだけ保存し、チケットと結びつけず、終了48時間後に削除する。この例外を他の機能に広げない。
 - サーバーはIPアドレス・User-AgentをログにもDBにも残さない。リクエストログはパスとステータスのみ。
 - チケット発行時のブラインド値（B_）を保存しない。発行と支払い、発行と消し込みを結びつける列を作らない。
 - Cookie、アクセス解析、外部CDN・外部フォントの読み込みを入れない。資産はすべて同梱する。
@@ -13,6 +15,7 @@
 - 新しいテーブル・列・ログ出力を足したら、docs/PRIVACY.md の「サーバーが見るもの・保存するもの」を同じコミットで更新する。
 
 ## 構成
+
 - pnpmワークスペース、TypeScript（strict）
 - apps/web: React + Vite + vite-plugin-pwa + Tailwind CSS + shadcn/ui
 - apps/server: Node.js + Hono + SQLite（Drizzle）
@@ -20,6 +23,7 @@
 - packages/messaging: MessagingAdapterインターフェースとmarmot-ts実装
 
 ## 進め方
+
 - 暗号処理を自作しない。監査されたライブラリ（@noble/curves、cashu-tsの暗号プリミティブ）を使い、Cashu NUTの公式テストベクターで検証する。
 - 外部ライブラリ（特にmarmot-ts、cashu-ts、@getalby/sdk）は、使う前に最新のREADMEと型定義を読む。記憶にあるAPIを前提にしない。バージョンは固定する。
 - marmot-tsはアルファ版。呼び出しは packages/messaging の中だけに閉じ込め、アプリ側は MessagingAdapter だけを使う。

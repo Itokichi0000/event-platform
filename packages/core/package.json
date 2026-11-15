@@ -1,0 +1,21 @@
+{
+  "name": "@kamen/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Blind-signature tickets (Cashu BDHKE + NUT-12 DLEQ) shared by browser and server",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pow": "./src/pow.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cashu/cashu-ts": "4.13.1",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0"
+  }
+}
