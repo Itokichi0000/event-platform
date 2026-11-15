@@ -32,8 +32,12 @@ const eventFields = z.object({
   location: z.string().max(500),
   locationVisibility: z.enum(['public', 'ticket_holders']),
   capacity: z.number().int().min(1).max(10_000),
-  issuePolicy: z.enum(['pow', 'invite', 'paid']),
+  issuePolicy: z.enum(['pow', 'invite', 'paid', 'approval']),
   priceMsat: z.number().int().min(0).max(100_000_000_000),
+  /** Hold-invoice deposit refunded at check-in (0 = none). Not combined with paid tickets. */
+  depositMsat: z.number().int().min(0).max(100_000_000_000),
+  /** Stamps from this host's earlier events required to get a ticket (regulars-first). */
+  minStamps: z.number().int().min(0).max(50),
   offlineCheckin: z.boolean(),
   roomEnabled: z.boolean(),
 });
@@ -45,6 +49,8 @@ const createSchema = eventFields
     locationVisibility: eventFields.shape.locationVisibility.default('public'),
     issuePolicy: eventFields.shape.issuePolicy.default('pow'),
     priceMsat: eventFields.shape.priceMsat.default(0),
+    depositMsat: eventFields.shape.depositMsat.default(0),
+    minStamps: eventFields.shape.minStamps.default(0),
     offlineCheckin: eventFields.shape.offlineCheckin.default(false),
     roomEnabled: eventFields.shape.roomEnabled.default(true),
   })
@@ -98,11 +104,19 @@ export function hostRoutes(ctx: AppContext) {
     const input = await jsonBody(c, createSchema);
     if (input.issuePolicy === 'paid' && input.priceMsat < MIN_PRICE_MSAT)
       apiError(400, 'price_required');
+    if (
+      input.depositMsat > 0 &&
+      (input.issuePolicy === 'paid' || input.depositMsat < MIN_PRICE_MSAT)
+    ) {
+      apiError(400, 'invalid_deposit');
+    }
     const now = ctx.now();
     const id = randomId();
     const ticket = generateKeyset('ticket');
     // Separate keyset for room passes, so a pass cannot be linked to the ticket (docs/SPEC.md §4).
     const room = generateKeyset('room');
+    // Check-in credential for anonymous polls, questions and draws (docs/SPEC.md §5).
+    const vote = generateKeyset('vote');
     ctx.db.transaction((tx) => {
       tx.insert(events)
         .values({
@@ -119,7 +133,7 @@ export function hostRoutes(ctx: AppContext) {
           updatedAt: now,
         })
         .run();
-      for (const ks of [ticket, room]) {
+      for (const ks of [ticket, room, vote]) {
         tx.insert(keysets)
           .values({
             id: ks.id,
@@ -154,6 +168,9 @@ export function hostRoutes(ctx: AppContext) {
     const policy = input.issuePolicy ?? row.issuePolicy;
     const price = input.priceMsat ?? row.priceMsat;
     if (policy === 'paid' && price < MIN_PRICE_MSAT) apiError(400, 'price_required');
+    const deposit = input.depositMsat ?? row.depositMsat;
+    if (deposit > 0 && (policy === 'paid' || deposit < MIN_PRICE_MSAT))
+      apiError(400, 'invalid_deposit');
     if (row.status === 'cancelled' && input.status && input.status !== 'cancelled') {
       apiError(409, 'event_cancelled');
     }

@@ -7,6 +7,9 @@
  * - When an event ends: delete its invite codes.
  * - Expired check-in links are deleted.
  * - Unpaid quotes are deleted an hour after their invoice expired.
+ * - Phase 4: 48 h after the end, also the vote keyset, the per-scope credential pseudonyms
+ *   (poll voters, question authors / voters, draw entries), approvals and finished deposits.
+ *   Poll counts, questions and draw results stay. Check-in signatures expire after 24 h.
  */
 import type { AppContext } from '../context.js';
 
@@ -20,6 +23,9 @@ export interface CleanupResult {
   deletedInviteCodes: number;
   deletedScannerLinks: number;
   clearedWallets: number;
+  deletedPseudonyms: number;
+  deletedApprovals: number;
+  deletedPendingSignatures: number;
 }
 
 export function runCleanup(ctx: AppContext): CleanupResult {
@@ -39,13 +45,13 @@ export function runCleanup(ctx: AppContext): CleanupResult {
       .prepare(
         `DELETE FROM spent WHERE keyset_id IN (
            SELECT k.id FROM keysets k JOIN events e ON e.id = k.event_id
-           WHERE k.kind IN ('ticket', 'room') AND e.ends_at <= ?)`,
+           WHERE k.kind IN ('ticket', 'room', 'vote') AND e.ends_at <= ?)`,
       )
       .run(cutoff).changes;
     const retiredKeysets = sqlite
       .prepare(
         `UPDATE keysets SET private_key_enc = NULL
-         WHERE kind IN ('ticket', 'room') AND private_key_enc IS NOT NULL
+         WHERE kind IN ('ticket', 'room', 'vote') AND private_key_enc IS NOT NULL
            AND event_id IN (SELECT id FROM events WHERE ends_at <= ?)`,
       )
       .run(cutoff).changes;
@@ -66,7 +72,31 @@ export function runCleanup(ctx: AppContext): CleanupResult {
     const deletedScannerLinks = sqlite
       .prepare('DELETE FROM scanner_links WHERE expires_at <= ?')
       .run(now).changes;
+    const ended = `(SELECT id FROM events WHERE ends_at <= ?)`;
+    let deletedPseudonyms = 0;
+    for (const sql of [
+      `DELETE FROM poll_voters WHERE poll_id IN (SELECT id FROM polls WHERE event_id IN ${ended})`,
+      `DELETE FROM question_votes WHERE question_id IN (SELECT id FROM questions WHERE event_id IN ${ended})`,
+      `DELETE FROM question_quota WHERE event_id IN ${ended}`,
+      `DELETE FROM draw_entries WHERE draw_id IN (SELECT id FROM draws WHERE event_id IN ${ended})`,
+    ]) {
+      deletedPseudonyms += sqlite.prepare(sql).run(cutoff).changes;
+    }
+    const deletedApprovals = sqlite
+      .prepare(`DELETE FROM approvals WHERE event_id IN ${ended}`)
+      .run(cutoff).changes;
+    sqlite
+      .prepare(
+        `DELETE FROM deposits WHERE state IN ('refunded', 'settled', 'expired') AND event_id IN ${ended}`,
+      )
+      .run(cutoff);
+    const deletedPendingSignatures = sqlite
+      .prepare('DELETE FROM pending_signatures WHERE expires_at <= ?')
+      .run(now).changes;
     return {
+      deletedPseudonyms,
+      deletedApprovals,
+      deletedPendingSignatures,
       retiredKeysets,
       deletedQuotes: endedQuotes + staleQuotes,
       deletedSpent,

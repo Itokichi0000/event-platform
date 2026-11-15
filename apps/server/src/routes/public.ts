@@ -28,7 +28,9 @@ import {
 import { AgentRequestError } from '../lib/agent-client.js';
 import { quotes, type EventRow } from '../db/schema.js';
 import { inviteCodeHash } from '../lib/invite.js';
-import { randomToken } from '../lib/secrets.js';
+import { randomToken, sha256Hex } from '../lib/secrets.js';
+import { getDeposit, refreshDeposit, refundDeposit } from '../lib/deposits.js';
+import { stampBundleSchema, swapStamps } from './attendee.js';
 import { jsonBody } from '../lib/validate.js';
 
 const hex = (bytes: number) => z.string().regex(new RegExp(`^[0-9a-f]{${bytes * 2}}$`));
@@ -56,6 +58,17 @@ const issueSchema = z.object({
     .string()
     .regex(/^[A-Za-z0-9_-]{20,64}$/)
     .optional(),
+  /** Approval-based events: the application id and its claim token. */
+  approval: z
+    .object({ id: z.string().min(1).max(64), token: z.string().min(16).max(64) })
+    .optional(),
+  /** Events with a deposit: the paid (held) deposit. */
+  depositId: z
+    .string()
+    .regex(/^[0-9a-f]{32}$/)
+    .optional(),
+  /** Regulars-first events: stamps of this host to present (they are swapped for fresh ones). */
+  stamps: stampBundleSchema.optional(),
   // Keyed by kind: the room pass is signed with its own keyset (unlinkable to the ticket).
   outputs: z.object({ ticket: blindedOutput, room: blindedOutput.optional() }).strict(),
 });
@@ -195,7 +208,18 @@ export function publicRoutes(ctx: AppContext) {
     }
 
     let inviteHash: string | null = null;
-    if (row.issuePolicy === 'paid') {
+    if (row.minStamps > 0 && (!body.stamps || body.stamps.proofs.length < row.minStamps)) {
+      apiError(403, 'stamps_required');
+    }
+    if (row.depositMsat > 0) {
+      if (!body.depositId) apiError(402, 'deposit_required');
+      const dep = getDeposit(ctx, row.id, body.depositId);
+      if (!dep) apiError(404, 'deposit_not_found');
+      if ((await refreshDeposit(ctx, row, dep)).state !== 'held') apiError(402, 'deposit_not_paid');
+    }
+    if (row.issuePolicy === 'approval') {
+      if (!body.approval) apiError(403, 'approval_required');
+    } else if (row.issuePolicy === 'paid') {
       if (!body.quoteId) apiError(422, 'quote_required');
       const quote = await refreshQuote(ctx, row, body.quoteId);
       if (quote.state === 'issued') apiError(409, 'quote_already_used');
@@ -219,7 +243,28 @@ export function publicRoutes(ctx: AppContext) {
     }
 
     const sqlite = ctx.db.$client;
+    let stampSignatures: ReturnType<typeof swapStamps>['signatures'] | undefined;
     const signatures = sqlite.transaction(() => {
+      if (row.issuePolicy === 'approval' && body.approval) {
+        const ok = sqlite
+          .prepare(
+            `UPDATE approvals SET state = 'issued'
+             WHERE id = ? AND event_id = ? AND token_hash = ? AND state = 'approved'`,
+          )
+          .run(body.approval.id, row.id, sha256Hex(body.approval.token));
+        if (ok.changes !== 1) apiError(403, 'not_approved');
+      }
+      if (row.depositMsat > 0 && body.depositId) {
+        const ok = sqlite
+          .prepare(
+            `UPDATE deposits SET state = 'issued' WHERE id = ? AND event_id = ? AND state = 'held'`,
+          )
+          .run(body.depositId, row.id);
+        if (ok.changes !== 1) apiError(402, 'deposit_not_paid');
+      }
+      if (row.minStamps > 0 && body.stamps) {
+        stampSignatures = swapStamps(ctx, body.stamps, row.hostPubkey).signatures;
+      }
       if (row.issuePolicy === 'paid') {
         const used = sqlite
           .prepare(
@@ -261,6 +306,7 @@ export function publicRoutes(ctx: AppContext) {
 
     return c.json({
       signatures,
+      ...(stampSignatures ? { stampSignatures } : {}),
       // Ticket holders learn a hidden location at issue time, so they never have to present
       // their ticket (and thus link a later request to it) just to read it.
       location: row.locationVisibility === 'ticket_holders' ? row.location : null,
@@ -269,10 +315,20 @@ export function publicRoutes(ctx: AppContext) {
 
   /**
    * Give a ticket back before the event: it becomes spent and the seat is released.
-   * Returned and redeemed tickets look the same in `spent`. No refund: the server holds no funds.
+   * Returned and redeemed tickets look the same in `spent`. No refund of a ticket price (the
+   * server holds no funds); a deposit (hold invoice) is cancelled, which releases it to the payer.
    */
   app.post('/events/:id/return', async (c) => {
-    const proof = await jsonBody(c, proofSchema);
+    const body = await jsonBody(
+      c,
+      proofSchema.extend({
+        depositRef: z
+          .string()
+          .regex(/^[0-9a-f]{32}$/)
+          .optional(),
+      }),
+    );
+    const proof = { keysetId: body.keysetId, secret: body.secret, C: body.C };
     const row = getEvent(ctx, c.req.param('id'));
     if (row.status !== 'published') apiError(409, 'event_not_published');
     if (row.endsAt <= ctx.now()) apiError(410, 'event_ended');
@@ -293,7 +349,8 @@ export function publicRoutes(ctx: AppContext) {
         )
         .run(row.id);
     })();
-    return c.json({ ok: true });
+    const deposit = body.depositRef ? await refundDeposit(ctx, row, body.depositRef) : null;
+    return c.json({ ok: true, deposit });
   });
 
   /**

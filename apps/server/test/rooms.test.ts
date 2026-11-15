@@ -110,7 +110,7 @@ describe('room passes', () => {
     const ev = await getPublicEvent(h, id);
     expect(ev.roomAvailable).toBe(true);
     const kinds = ev.keysets.map((k) => k.kind).sort();
-    expect(kinds).toEqual(['room', 'ticket']);
+    expect(kinds).toEqual(['room', 'ticket', 'vote']);
     const { pass, ticket } = await getTicketAndPass(h, id);
     expect(pass).not.toBeNull();
     expect(pass!.keysetId).not.toBe(ticket.keysetId);

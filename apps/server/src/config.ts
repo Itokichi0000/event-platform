@@ -26,6 +26,13 @@ const schema = z.object({
   KAMEN_MOCK_WALLET: z.enum(['0', '1']).default('0'),
   KAMEN_MOCK_WALLET_SETTLE_MS: z.coerce.number().int().min(0).default(1500),
   NODE_ENV: z.string().optional(),
+  /** Deposits (hold invoices) can be paid only this many hours before the start. */
+  DEPOSIT_WINDOW_HOURS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 14)
+    .default(72),
   /** Relays for event rooms (space- or comma-separated). Unset = rooms disabled. */
   ROOM_RELAYS: z.string().default(''),
   /** Internal URL of the room agent process. */
@@ -45,6 +52,7 @@ export interface Config {
   mockWalletSettleMs: number | null;
   roomRelays: string[];
   agentUrl: string;
+  depositWindowHours: number;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -71,5 +79,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     mockWalletSettleMs: e.KAMEN_MOCK_WALLET === '1' ? e.KAMEN_MOCK_WALLET_SETTLE_MS : null,
     roomRelays: parseRelays(e.ROOM_RELAYS),
     agentUrl: e.AGENT_URL,
+    depositWindowHours: e.DEPOSIT_WINDOW_HOURS,
   };
 }

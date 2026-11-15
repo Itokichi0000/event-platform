@@ -5,7 +5,8 @@
  */
 import { NWCClient } from '@getalby/sdk/nwc';
 
-export type InvoiceState = 'settled' | 'pending' | 'failed' | 'expired';
+/** `accepted`: a hold invoice was paid and its funds are locked until settled or cancelled. */
+export type InvoiceState = 'settled' | 'accepted' | 'pending' | 'failed' | 'expired';
 
 export interface Invoice {
   invoice: string;
@@ -19,6 +20,15 @@ export interface Wallet {
   methods(): Promise<string[]>;
   makeInvoice(amountMsat: number, description: string, expirySeconds: number): Promise<Invoice>;
   lookupInvoice(paymentHash: string): Promise<InvoiceState>;
+  /** Hold invoice (NIP-47 make_hold_invoice): the payer's funds stay locked until settle/cancel. */
+  makeHoldInvoice(
+    amountMsat: number,
+    paymentHash: string,
+    description: string,
+    expirySeconds: number,
+  ): Promise<Invoice>;
+  settleHoldInvoice(preimage: string): Promise<void>;
+  cancelHoldInvoice(paymentHash: string): Promise<void>;
   /** Calls `onPaid(paymentHash)` for incoming payments. Returns an unsubscribe function. */
   subscribePayments(onPaid: (paymentHash: string) => void): Promise<() => void>;
   close(): void;
@@ -65,9 +75,29 @@ export const nwcWalletFactory: WalletFactory = (uri) => {
     async lookupInvoice(paymentHash) {
       const tx = await client.lookupInvoice({ payment_hash: paymentHash });
       if (tx.state === 'settled') return 'settled';
+      if (tx.state === 'accepted') return 'accepted';
       if (tx.state === 'failed') return 'failed';
       if (tx.expires_at && tx.expires_at * 1000 < Date.now()) return 'expired';
       return 'pending';
+    },
+    async makeHoldInvoice(amountMsat, paymentHash, description, expirySeconds) {
+      const tx = await client.makeHoldInvoice({
+        amount: amountMsat,
+        payment_hash: paymentHash,
+        description,
+        expiry: expirySeconds,
+      });
+      return {
+        invoice: tx.invoice,
+        paymentHash: tx.payment_hash,
+        expiresAt: (tx.expires_at || Math.floor(Date.now() / 1000) + expirySeconds) * 1000,
+      };
+    },
+    async settleHoldInvoice(preimage) {
+      await client.settleHoldInvoice({ preimage });
+    },
+    async cancelHoldInvoice(paymentHash) {
+      await client.cancelHoldInvoice({ payment_hash: paymentHash });
     },
     async subscribePayments(onPaid) {
       return client.subscribeNotifications(
@@ -94,8 +124,31 @@ export class MockWalletBackend {
     string,
     { amountMsat: number; settled: boolean; createdAt: number }
   >();
+  /** Hold invoices: unpaid → accepted (paid, locked) → settled | cancelled. */
+  readonly holds = new Map<
+    string,
+    {
+      amountMsat: number;
+      state: 'unpaid' | 'accepted' | 'settled' | 'cancelled';
+      createdAt: number;
+    }
+  >();
   readonly #listeners = new Set<(hash: string) => void>();
-  methodsList = ['get_info', 'make_invoice', 'lookup_invoice'];
+  methodsList = [
+    'get_info',
+    'make_invoice',
+    'lookup_invoice',
+    'make_hold_invoice',
+    'settle_hold_invoice',
+    'cancel_hold_invoice',
+  ];
+
+  /** Simulate the participant paying a hold invoice (funds locked). */
+  payHold(paymentHash: string): void {
+    const h = this.holds.get(paymentHash);
+    if (!h) throw new Error('unknown hold invoice');
+    if (h.state === 'unpaid') h.state = 'accepted';
+  }
   failNext = false;
 
   constructor(
@@ -130,6 +183,21 @@ export class MockWalletBackend {
         };
       },
       lookupInvoice: async (paymentHash) => {
+        const hold = this.holds.get(paymentHash);
+        if (hold) {
+          if (
+            hold.state === 'unpaid' &&
+            this.settleAfterMs !== null &&
+            this.now() - hold.createdAt >= this.settleAfterMs
+          ) {
+            hold.state = 'accepted';
+          }
+          return hold.state === 'unpaid'
+            ? 'pending'
+            : hold.state === 'cancelled'
+              ? 'failed'
+              : (hold.state as 'accepted' | 'settled');
+        }
         const inv = this.invoices.get(paymentHash);
         if (!inv) throw new Error('unknown invoice');
         if (
@@ -140,6 +208,27 @@ export class MockWalletBackend {
           inv.settled = true;
         }
         return inv.settled ? 'settled' : 'pending';
+      },
+      makeHoldInvoice: async (amountMsat, paymentHash, _description, expirySeconds) => {
+        this.holds.set(paymentHash, { amountMsat, state: 'unpaid', createdAt: this.now() });
+        return {
+          invoice: `lnbcrt${Math.floor(amountMsat / 1000)}n1hold${paymentHash.slice(0, 20)}`,
+          paymentHash,
+          expiresAt: this.now() + expirySeconds * 1000,
+        };
+      },
+      settleHoldInvoice: async (preimage) => {
+        const { createHash } = await import('node:crypto');
+        const hash = createHash('sha256').update(Buffer.from(preimage, 'hex')).digest('hex');
+        const h = this.holds.get(hash);
+        if (!h || h.state !== 'accepted') throw new Error('cannot settle');
+        h.state = 'settled';
+      },
+      cancelHoldInvoice: async (paymentHash) => {
+        const h = this.holds.get(paymentHash);
+        if (!h) throw new Error('unknown hold invoice');
+        if (h.state === 'settled') throw new Error('already settled');
+        h.state = 'cancelled';
       },
       subscribePayments: async (onPaid) => {
         this.#listeners.add(onPaid);

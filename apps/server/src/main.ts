@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { createContext } from './context.js';
 import { openDatabase } from './db/index.js';
 import { runCleanup } from './jobs/cleanup.js';
+import { settleDeposits } from './lib/deposits.js';
 
 const config = loadConfig();
 const db = openDatabase(config.databasePath);
@@ -26,8 +27,19 @@ function cleanup() {
     console.log(`cleanup failed: ${e instanceof Error ? e.message : 'unknown'}`);
   }
 }
-cleanup();
-const cleanupTimer = setInterval(cleanup, CLEANUP_INTERVAL_MS);
+async function periodic() {
+  // Settle no-show deposits (and refund paid-but-unused ones) before deleting old records.
+  try {
+    const d = await settleDeposits(ctx);
+    if (d.settled + d.refunded > 0)
+      console.log(`deposits: settled=${d.settled} refunded=${d.refunded}`);
+  } catch (e) {
+    console.log(`deposit job failed: ${e instanceof Error ? e.message : 'unknown'}`);
+  }
+  cleanup();
+}
+void periodic();
+const cleanupTimer = setInterval(() => void periodic(), CLEANUP_INTERVAL_MS);
 
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
   console.log(`kamen server listening on ${info.address}:${info.port}`);

@@ -13,6 +13,7 @@ import {
   announcements,
   eventCohosts,
   events,
+  hosts,
   keysets,
   quotes,
   type EventRow,
@@ -87,7 +88,7 @@ export function markPaid(ctx: AppContext, eventId: string, paymentHash: string):
 }
 
 export function apiError(
-  status: 400 | 401 | 402 | 403 | 404 | 409 | 410 | 413 | 422 | 502 | 503,
+  status: 400 | 401 | 402 | 403 | 404 | 409 | 410 | 413 | 422 | 429 | 502 | 503,
   code: string,
 ): never {
   throw new HTTPException(status, { res: Response.json({ error: code }, { status }) });
@@ -171,25 +172,75 @@ export function roomAvailable(ctx: AppContext, row: EventRow): boolean {
   );
 }
 
-/** Events created before phase 3 get their room keyset on first use. */
-export function ensureRoomKeyset(ctx: AppContext, eventId: string): void {
+/** Events created before a keyset kind existed get it on first use (room: phase 3, vote: phase 4). */
+export function ensureEventKeyset(ctx: AppContext, eventId: string, kind: 'room' | 'vote'): void {
   const exists = ctx.db
     .select({ id: keysets.id })
     .from(keysets)
-    .where(and(eq(keysets.eventId, eventId), eq(keysets.kind, 'room')))
+    .where(and(eq(keysets.eventId, eventId), eq(keysets.kind, kind)))
     .get();
   if (exists) return;
-  const ks = generateKeyset('room');
+  const ks = generateKeyset(kind);
   ctx.db
     .insert(keysets)
     .values({
       id: ks.id,
       eventId,
-      kind: 'room',
+      kind,
       publicKey: ks.publicKey,
       privateKeyEnc: ctx.vault.encrypt(ks.privateKey, ks.id),
     })
     .run();
+}
+
+export function ensureRoomKeyset(ctx: AppContext, eventId: string): void {
+  ensureEventKeyset(ctx, eventId, 'room');
+}
+
+/**
+ * The host's stamp keyset (御朱印). One per host, never retired: a stamp proves "attended one of
+ * this host's events" without saying which.
+ */
+export function hostStampKeyset(ctx: AppContext, hostPubkey: string): Keyset {
+  const row = ctx.db
+    .select()
+    .from(keysets)
+    .where(and(eq(keysets.hostPubkey, hostPubkey), eq(keysets.kind, 'stamp')))
+    .get();
+  if (!row) {
+    const ks = generateKeyset('stamp');
+    ctx.db.insert(hosts).values({ pubkey: hostPubkey }).onConflictDoNothing().run();
+    ctx.db
+      .insert(keysets)
+      .values({
+        id: ks.id,
+        hostPubkey,
+        kind: 'stamp',
+        publicKey: ks.publicKey,
+        privateKeyEnc: ctx.vault.encrypt(ks.privateKey, ks.id),
+      })
+      .run();
+    return ks;
+  }
+  if (!row.privateKeyEnc) apiError(410, 'keyset_retired');
+  return keysetFromPrivateKey('stamp', ctx.vault.decrypt(row.privateKeyEnc, row.id));
+}
+
+/** Stamp keyset by id (any host); null if unknown or retired. */
+export function stampKeysetById(
+  ctx: AppContext,
+  id: string,
+): (Keyset & { hostPubkey: string }) | null {
+  const row = ctx.db
+    .select()
+    .from(keysets)
+    .where(and(eq(keysets.id, id), eq(keysets.kind, 'stamp')))
+    .get();
+  if (!row?.privateKeyEnc || !row.hostPubkey) return null;
+  return {
+    ...keysetFromPrivateKey('stamp', ctx.vault.decrypt(row.privateKeyEnc, row.id)),
+    hostPubkey: row.hostPubkey,
+  };
 }
 
 /** Paid but not yet issued tickets hold a seat (they must always be issuable). */
@@ -229,6 +280,13 @@ export function toPublicEvent(ctx: AppContext, row: EventRow) {
     roomAvailable: roomAvailable(ctx, row),
     // Public anyway (participants' browsers connect to them); empty when rooms are off.
     roomRelays: roomAvailable(ctx, row) ? ctx.config.roomRelays : [],
+    depositMsat: row.depositMsat,
+    minStamps: row.minStamps,
+    /** The host's stamp public key, so participants can verify stamps (DLEQ). */
+    stampKeyset: (() => {
+      const ks = hostStampKeyset(ctx, row.hostPubkey);
+      return { id: ks.id, kind: ks.kind, publicKey: ks.publicKey };
+    })(),
     keysets: publicKeysets(ctx, row.id),
     announcements: listAnnouncements(ctx, row.id),
   };
