@@ -1,6 +1,7 @@
 # Self-hosting: `cp .env.example .env`, set KAMEN_MASTER_KEY and KAMEN_DOMAIN, then
 #   docker compose up -d --build
-# Rooms are on when ROOM_RELAYS is set (see .env.example), off when it is empty.
+# Rooms are off by default. To turn them on, set ROOM_RELAYS (see .env.example) and add
+# `--profile rooms` so the room agent starts.
 services:
   server:
     build: { context: ., target: server }
@@ -17,11 +18,12 @@ services:
     expose:
       - '8787'
 
-  # Room agent (docs/SPEC.md §5). Idles when ROOM_RELAYS is empty; reachable only inside this
+  # Room agent (docs/SPEC.md §5). Starts only with `--profile rooms`; reachable only inside this
   # compose network. It administers the Marmot rooms and can read them (docs/PRIVACY.md).
   agent:
     build: { context: ., target: server }
     restart: unless-stopped
+    profiles: [rooms]
     command: ['node', 'dist/agent.mjs']
     environment:
       KAMEN_MASTER_KEY: ${KAMEN_MASTER_KEY:?set KAMEN_MASTER_KEY (openssl rand -hex 32)}

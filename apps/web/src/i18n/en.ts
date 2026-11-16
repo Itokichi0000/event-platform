@@ -96,7 +96,7 @@ export const en: Dict = {
       'Neither the server nor the host can link an issued ticket to an entry',
     ],
     privacyNote:
-      'People at the venue can see your face. At small events the anonymity set is small too.',
+      'People at the venue can see your face. At small events the anonymity set is small too. Your IP address may be visible to the server and its hosting provider (when you get a ticket, and for stamps and polls after check-in). Use Tor or a VPN if that concerns you.',
     privacyInvite:
       'If invite codes are handed out one per person, the host learns that you got a ticket. They cannot tell whether you came.',
     privacyPaid:

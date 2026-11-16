@@ -38,7 +38,7 @@
 手動確認の手順は [docs/TESTING.md](docs/TESTING.md) を参照してください。
 
 フェーズ3で入ったもの：参加者用の暗号化チャット「仮面ルーム」（Marmot / MLS）。チケットと同時に入室パスを受け取り、
-イベントごとの使い捨て鍵で入ります。ルームはサーバーの環境変数 `ROOM_RELAYS` が設定されているときだけ有効です。
+イベントごとの使い捨て鍵で入ります。ルームは**既定でオフ**です。使うときは `.env` の `ROOM_RELAYS` にリレーを書き、`docker compose --profile rooms up -d --build` で起動します。
 **ルームエージェント（このサーバー）はルームの会話を読めます**（[docs/PRIVACY.md](docs/PRIVACY.md)）。
 調査と実装の記録は [docs/MARMOT-NOTES.md](docs/MARMOT-NOTES.md) にあります。
 
@@ -108,6 +108,8 @@ pnpm e2e
 ```
 
 ## セルフホスト
+
+VPS の用意から本番当日のチェックリストまでの詳しい手順は [docs/DEPLOY.md](docs/DEPLOY.md) にあります。
 
 Docker Compose で、Caddy（PWA の配信と `/api` の転送、自動 HTTPS）と API サーバーが起動します。
 同梱の Caddy 設定はアクセスログを残さず、IP アドレスと User-Agent を API サーバーに渡しません。
