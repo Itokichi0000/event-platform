@@ -3,5 +3,9 @@ packages:
   - packages/*
 
 onlyBuiltDependencies:
-  - better-sqlite3
   - esbuild
+
+# better-sqlite3 ships prebuilt binaries (prebuilds/) for Linux, macOS and Windows; its implicit
+# `node-gyp rebuild` would need Python and a compiler (absent in the Docker build image).
+ignoredBuiltDependencies:
+  - better-sqlite3
